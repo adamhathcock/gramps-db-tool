@@ -10,7 +10,7 @@ builder.Logging.AddConsole(options =>
     options.LogToStandardErrorThreshold = LogLevel.Trace;
 });
 
-builder.Services.AddSingleton(new GrampsDatabaseOptions(GetDatabasePath(args)));
+builder.Services.AddSingleton(new GrampsDatabaseOptions(GetDatabasePath(args), WritesEnabled(args)));
 builder.Services.AddSingleton<GrampsContext>();
 
 builder.Services
@@ -39,4 +39,18 @@ static string? GetDatabasePath(string[] args)
     }
 
     return Environment.GetEnvironmentVariable("GRAMPS_SQLITE_PATH");
+}
+
+static bool WritesEnabled(string[] args)
+{
+    if (args.Contains("--allow-writes", StringComparer.Ordinal))
+    {
+        return true;
+    }
+
+    var value = Environment.GetEnvironmentVariable("GRAMPS_ALLOW_WRITES");
+    return value is not null
+        && (value.Equals("1", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("yes", StringComparison.OrdinalIgnoreCase));
 }

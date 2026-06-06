@@ -5,7 +5,7 @@ using Microsoft.Data.Sqlite;
 
 namespace GrampsDbTool.Data;
 
-public sealed class GrampsContext(GrampsDatabaseOptions options)
+public sealed partial class GrampsContext(GrampsDatabaseOptions options)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -19,6 +19,7 @@ public sealed class GrampsContext(GrampsDatabaseOptions options)
     ];
 
     private readonly string? databasePath = options.DatabasePath;
+    private readonly bool allowWrites = options.AllowWrites;
 
     public GrampsObjectSet<Person> People => new(this, "person");
     public GrampsObjectSet<Family> Families => new(this, "family");
@@ -182,7 +183,33 @@ public sealed class GrampsContext(GrampsDatabaseOptions options)
         return string.IsNullOrWhiteSpace(jsonData) ? default : Deserialize<T>(jsonData);
     }
 
-    private SqliteConnection OpenConnection()
+    private SqliteConnection OpenConnection(bool writable = false)
+    {
+        var resolvedDatabasePath = ResolveDatabasePath();
+
+        if (writable && !allowWrites)
+        {
+            throw new InvalidOperationException("Writes are disabled. Start the server with --allow-writes or GRAMPS_ALLOW_WRITES=true to modify the database.");
+        }
+
+        var connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = resolvedDatabasePath,
+            Mode = writable ? SqliteOpenMode.ReadWrite : SqliteOpenMode.ReadOnly,
+            Cache = SqliteCacheMode.Shared
+        }.ToString();
+
+        var connection = new SqliteConnection(connectionString);
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = writable ? "pragma busy_timeout = 5000" : "pragma query_only = on";
+        command.ExecuteNonQuery();
+
+        return connection;
+    }
+
+    private string ResolveDatabasePath()
     {
         if (string.IsNullOrWhiteSpace(databasePath))
         {
@@ -194,21 +221,7 @@ public sealed class GrampsContext(GrampsDatabaseOptions options)
             throw new FileNotFoundException("Gramps SQLite database was not found.", databasePath);
         }
 
-        var connectionString = new SqliteConnectionStringBuilder
-        {
-            DataSource = databasePath,
-            Mode = SqliteOpenMode.ReadOnly,
-            Cache = SqliteCacheMode.Shared
-        }.ToString();
-
-        var connection = new SqliteConnection(connectionString);
-        connection.Open();
-
-        using var command = connection.CreateCommand();
-        command.CommandText = "pragma query_only = on";
-        command.ExecuteNonQuery();
-
-        return connection;
+        return databasePath;
     }
 
     private static IReadOnlyList<MetadataEntry> ReadMetadata(SqliteConnection connection)
