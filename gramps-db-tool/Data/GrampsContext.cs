@@ -20,7 +20,6 @@ public sealed partial class GrampsContext(GrampsDatabaseOptions options)
 
     private readonly string? databasePath = options.DatabasePath;
     private readonly bool allowWrites = options.AllowWrites;
-    private readonly string? mediaDirectory = options.MediaDirectory;
 
     public GrampsObjectSet<Person> People => new(this, "person");
     public GrampsObjectSet<Family> Families => new(this, "family");

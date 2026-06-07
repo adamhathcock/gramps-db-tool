@@ -27,17 +27,6 @@ public sealed class DatabaseTools(GrampsContext context)
         [Description("If true, computes the patch result without writing to the database.")] bool dryRun = false) =>
         context.MergePatchRecord(objectType, handle, patch, expectedChange, updateChange, dryRun);
 
-    [McpServerTool, Description("Copies a local file into the Gramps media directory as a new Media object and optionally links it to a Person. Writes require --allow-writes or GRAMPS_ALLOW_WRITES=true.")]
-    public ImportMediaResult ImportMedia(
-        [Description("Local source file path readable by the MCP server.")] string sourcePath,
-        [Description("Optional media description.")] string? description = null,
-        [Description("Optional MIME type. Inferred from file extension when omitted.")] string? mime = null,
-        [Description("Optional destination file name. Defaults to the source file name. Must not include a directory path.")] string? fileName = null,
-        [Description("Optional person handle to link the new media to.")] string? personHandle = null,
-        [Description("Whether to mark the media object and person media reference private.")] bool @private = false,
-        [Description("If true, validates and returns planned records without copying files or writing database changes.")] bool dryRun = false) =>
-        context.ImportMedia(sourcePath, description, mime, fileName, personHandle, @private, dryRun);
-
     [McpServerTool, Description("Gets a Gramps record by object type and handle from the table json_data payload.")]
     public object? GetRecord(
         [Description("Object table to retrieve: person, family, event, place, source, citation, media, repository, note, or tag.")] string objectType,

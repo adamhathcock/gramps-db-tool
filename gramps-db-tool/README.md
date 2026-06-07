@@ -25,6 +25,20 @@ Or use an environment variable:
 GRAMPS_SQLITE_PATH=/path/to/sqlite.db dotnet run
 ```
 
+Non-write settings can also be loaded from JSON. The server looks for config in this order:
+
+- `--config /path/to/gramps-db-tool.json`
+- `GRAMPS_DB_TOOL_CONFIG=/path/to/gramps-db-tool.json`
+- `gramps-db-tool.json` in the current working directory
+
+CLI arguments override environment variables, and environment variables override config file values. Write enablement is intentionally not supported in config; use `--allow-writes` or `GRAMPS_ALLOW_WRITES=true` only.
+
+```json
+{
+  "databasePath": "/path/to/sqlite.db"
+}
+```
+
 By default the server exposes MCP over HTTP using the SDK HTTP transport.
 
 Write tools are disabled unless explicitly enabled:
@@ -38,14 +52,6 @@ Or:
 ```bash
 GRAMPS_ALLOW_WRITES=true GRAMPS_SQLITE_PATH=/path/to/sqlite.db dotnet run
 ```
-
-Media imports copy local files to `GRAMPS_MEDIA_DIR` or `--media-dir` when configured:
-
-```bash
-dotnet run -- --database /path/to/sqlite.db --allow-writes --media-dir /path/to/media
-```
-
-When no media directory is configured, imported files are copied to `media/` beside the database and stored in Gramps with relative paths such as `media/photo.jpg`.
 
 ## Model
 
@@ -68,8 +74,7 @@ SQLite materialized columns are treated as search/index projections. The canonic
 
 - `database_info`: returns SQLite version, table list, primary Gramps table availability, and metadata rows.
 - `backup_database`: creates a consistent SQLite backup beside the configured database file.
-- `merge_patch_record`: applies an RFC 7396 JSON Merge Patch to a primary Gramps record.
-- `import_media`: copies a local file into the Gramps media directory, creates a new `Media` object, and optionally links it to a person.
+- `merge_patch_record`: applies an RFC 7396 JSON Merge Patch to an existing primary Gramps record. This is the only database write tool.
 - `get_record`: returns a typed record by object type and handle.
 - `get_record_by_id`: returns a typed record by object type and Gramps ID. Tags do not have Gramps IDs.
 - `search_people`: searches indexed person columns and returns typed person summaries, or returns all people up to `maxRows` when search is empty or omitted.
@@ -82,4 +87,4 @@ SQLite materialized columns are treated as search/index projections. The canonic
 - The patched raw JSON is written back to `json_data`, so unknown Gramps JSON fields are preserved.
 - JSON Merge Patch replaces arrays wholesale and removes object properties whose patch value is `null`.
 - Write updates refresh known materialized columns from the typed models and rebuild `reference` rows for the updated object.
-- `import_media` copies a local source file, inserts a Gramps media record, and appends a `MediaRef` to the person when `personHandle` is provided.
+- The server does not create Gramps objects. To link media to a person, the `Media` object must already exist and `merge_patch_record` must update the existing person's complete `media_list` array.

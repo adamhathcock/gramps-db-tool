@@ -17,15 +17,3 @@ public sealed record RecordUpdateResult(
     IReadOnlyList<string> UpdatedColumns,
     int ReferencesUpdated,
     JsonObject Record);
-
-public sealed record ImportMediaResult(
-    bool DryRun,
-    string Handle,
-    string GrampsId,
-    string SourcePath,
-    string FilePath,
-    string StoredPath,
-    string Mime,
-    string? LinkedPersonHandle,
-    JsonObject MediaRecord,
-    JsonObject? PersonRecord);
