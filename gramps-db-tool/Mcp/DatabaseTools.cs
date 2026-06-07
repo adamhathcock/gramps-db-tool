@@ -27,41 +27,30 @@ public sealed class DatabaseTools(GrampsContext context)
         [Description("If true, computes the patch result without writing to the database.")] bool dryRun = false) =>
         context.MergePatchRecord(objectType, handle, patch, expectedChange, updateChange, dryRun);
 
+    [McpServerTool, Description("Copies a local file into the Gramps media directory as a new Media object and optionally links it to a Person. Writes require --allow-writes or GRAMPS_ALLOW_WRITES=true.")]
+    public ImportMediaResult ImportMedia(
+        [Description("Local source file path readable by the MCP server.")] string sourcePath,
+        [Description("Optional media description.")] string? description = null,
+        [Description("Optional MIME type. Inferred from file extension when omitted.")] string? mime = null,
+        [Description("Optional destination file name. Defaults to the source file name. Must not include a directory path.")] string? fileName = null,
+        [Description("Optional person handle to link the new media to.")] string? personHandle = null,
+        [Description("Whether to mark the media object and person media reference private.")] bool @private = false,
+        [Description("If true, validates and returns planned records without copying files or writing database changes.")] bool dryRun = false) =>
+        context.ImportMedia(sourcePath, description, mime, fileName, personHandle, @private, dryRun);
+
+    [McpServerTool, Description("Gets a Gramps record by object type and handle from the table json_data payload.")]
+    public object? GetRecord(
+        [Description("Object table to retrieve: person, family, event, place, source, citation, media, repository, note, or tag.")] string objectType,
+        [Description("The Gramps record handle.")] string handle) => context.GetRecord(objectType, handle);
+
+    [McpServerTool, Description("Gets a Gramps record by object type and Gramps ID from the table json_data payload. Tags do not have Gramps IDs.")]
+    public object? GetRecordById(
+        [Description("Object table to retrieve: person, family, event, place, source, citation, media, repository, or note.")] string objectType,
+        [Description("The Gramps ID, for example I0001 or O0001.")] string grampsId) => context.GetRecordById(objectType, grampsId);
+
     [McpServerTool, Description("Searches Gramps people by handle, Gramps ID, given name, or surname using the source-shaped Person model. Empty or omitted search returns all people up to maxRows.")]
     public IReadOnlyList<PersonSummary> SearchPeople(
         [Description("Text to search for in person handle, Gramps ID, given name, and surname. Empty or null returns all people.")] string? search = null,
         [Description("Maximum people to return. Clamped to 1-100.")] int maxRows = 25) => context.SearchPeople(search, maxRows);
 
-    [McpServerTool, Description("Gets a Gramps Person by handle from the person table json_data payload.")]
-    public Person? GetPerson([Description("The Gramps person handle.")] string handle) => context.People.GetByHandle(handle);
-
-    [McpServerTool, Description("Gets a Gramps Person by Gramps ID from the person table json_data payload.")]
-    public Person? GetPersonById([Description("The Gramps person ID, for example I0001.")] string grampsId) => context.People.GetByGrampsId(grampsId);
-
-    [McpServerTool, Description("Gets a Gramps Family by handle from the family table json_data payload.")]
-    public Family? GetFamily([Description("The Gramps family handle.")] string handle) => context.Families.GetByHandle(handle);
-
-    [McpServerTool, Description("Gets a Gramps Event by handle from the event table json_data payload.")]
-    public Event? GetEvent([Description("The Gramps event handle.")] string handle) => context.Events.GetByHandle(handle);
-
-    [McpServerTool, Description("Gets a Gramps Place by handle from the place table json_data payload.")]
-    public Place? GetPlace([Description("The Gramps place handle.")] string handle) => context.Places.GetByHandle(handle);
-
-    [McpServerTool, Description("Gets a Gramps Source by handle from the source table json_data payload.")]
-    public Source? GetSource([Description("The Gramps source handle.")] string handle) => context.Sources.GetByHandle(handle);
-
-    [McpServerTool, Description("Gets a Gramps Citation by handle from the citation table json_data payload.")]
-    public Citation? GetCitation([Description("The Gramps citation handle.")] string handle) => context.Citations.GetByHandle(handle);
-
-    [McpServerTool, Description("Gets a Gramps Note by handle from the note table json_data payload.")]
-    public Note? GetNote([Description("The Gramps note handle.")] string handle) => context.Notes.GetByHandle(handle);
-
-    [McpServerTool, Description("Gets a Gramps Media object by handle from the media table json_data payload.")]
-    public Media? GetMedia([Description("The Gramps media handle.")] string handle) => context.Media.GetByHandle(handle);
-
-    [McpServerTool, Description("Gets a Gramps Repository by handle from the repository table json_data payload.")]
-    public Repository? GetRepository([Description("The Gramps repository handle.")] string handle) => context.Repositories.GetByHandle(handle);
-
-    [McpServerTool, Description("Gets a Gramps Tag by handle from the tag table json_data payload.")]
-    public Tag? GetTag([Description("The Gramps tag handle.")] string handle) => context.Tags.GetByHandle(handle);
 }

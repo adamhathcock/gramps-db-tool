@@ -1,3 +1,3 @@
 namespace GrampsDbTool.Data;
 
-public sealed record GrampsDatabaseOptions(string? DatabasePath, bool AllowWrites);
+public sealed record GrampsDatabaseOptions(string? DatabasePath, bool AllowWrites, string? MediaDirectory);

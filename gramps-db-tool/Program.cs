@@ -10,7 +10,7 @@ builder.Logging.AddConsole(options =>
     options.LogToStandardErrorThreshold = LogLevel.Trace;
 });
 
-builder.Services.AddSingleton(new GrampsDatabaseOptions(GetDatabasePath(args), WritesEnabled(args)));
+builder.Services.AddSingleton(new GrampsDatabaseOptions(GetDatabasePath(args), WritesEnabled(args), GetMediaDirectory(args)));
 builder.Services.AddSingleton<GrampsContext>();
 
 builder.Services
@@ -53,4 +53,23 @@ static bool WritesEnabled(string[] args)
         && (value.Equals("1", StringComparison.OrdinalIgnoreCase)
             || value.Equals("true", StringComparison.OrdinalIgnoreCase)
             || value.Equals("yes", StringComparison.OrdinalIgnoreCase));
+}
+
+static string? GetMediaDirectory(string[] args)
+{
+    for (var i = 0; i < args.Length; i++)
+    {
+        if (args[i] == "--media-dir" && i + 1 < args.Length)
+        {
+            return args[i + 1];
+        }
+
+        const string mediaDirectoryPrefix = "--media-dir=";
+        if (args[i].StartsWith(mediaDirectoryPrefix, StringComparison.Ordinal))
+        {
+            return args[i][mediaDirectoryPrefix.Length..];
+        }
+    }
+
+    return Environment.GetEnvironmentVariable("GRAMPS_MEDIA_DIR");
 }

@@ -20,6 +20,7 @@ public sealed partial class GrampsContext(GrampsDatabaseOptions options)
 
     private readonly string? databasePath = options.DatabasePath;
     private readonly bool allowWrites = options.AllowWrites;
+    private readonly string? mediaDirectory = options.MediaDirectory;
 
     public GrampsObjectSet<Person> People => new(this, "person");
     public GrampsObjectSet<Family> Families => new(this, "family");
@@ -139,6 +140,44 @@ public sealed partial class GrampsContext(GrampsDatabaseOptions options)
 
         using var connection = OpenConnection();
         return GetByColumn<T>(connection, tableName, "gramps_id", grampsId);
+    }
+
+    public object? GetRecord(string objectType, string handle)
+    {
+        var tableName = NormalizeObjectType(objectType);
+        return tableName switch
+        {
+            "person" => People.GetByHandle(handle),
+            "family" => Families.GetByHandle(handle),
+            "event" => Events.GetByHandle(handle),
+            "place" => Places.GetByHandle(handle),
+            "source" => Sources.GetByHandle(handle),
+            "citation" => Citations.GetByHandle(handle),
+            "media" => Media.GetByHandle(handle),
+            "repository" => Repositories.GetByHandle(handle),
+            "note" => Notes.GetByHandle(handle),
+            "tag" => Tags.GetByHandle(handle),
+            _ => throw new ArgumentException($"Unsupported object type: {objectType}.", nameof(objectType))
+        };
+    }
+
+    public object? GetRecordById(string objectType, string grampsId)
+    {
+        var tableName = NormalizeObjectType(objectType);
+        return tableName switch
+        {
+            "person" => People.GetByGrampsId(grampsId),
+            "family" => Families.GetByGrampsId(grampsId),
+            "event" => Events.GetByGrampsId(grampsId),
+            "place" => Places.GetByGrampsId(grampsId),
+            "source" => Sources.GetByGrampsId(grampsId),
+            "citation" => Citations.GetByGrampsId(grampsId),
+            "media" => Media.GetByGrampsId(grampsId),
+            "repository" => Repositories.GetByGrampsId(grampsId),
+            "note" => Notes.GetByGrampsId(grampsId),
+            "tag" => throw new InvalidOperationException("Tags do not have Gramps IDs."),
+            _ => throw new ArgumentException($"Unsupported object type: {objectType}.", nameof(objectType))
+        };
     }
 
     internal IReadOnlyList<T> List<T>(string tableName, int maxRows)

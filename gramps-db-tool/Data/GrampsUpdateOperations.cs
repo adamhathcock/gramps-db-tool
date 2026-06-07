@@ -1,4 +1,6 @@
 using System.Data;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GrampsDbTool.Models;
@@ -8,6 +10,8 @@ namespace GrampsDbTool.Data;
 
 public sealed partial class GrampsContext
 {
+    private const string MediaIndexSetting = "omap_index";
+
     private static readonly IReadOnlyDictionary<string, string> ObjectTables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
         ["person"] = "person",
@@ -138,6 +142,125 @@ public sealed partial class GrampsContext
             updatedColumns,
             references.Count,
             patchedRecord);
+    }
+
+    public ImportMediaResult ImportMedia(
+        string sourcePath,
+        string? description = null,
+        string? mime = null,
+        string? fileName = null,
+        string? personHandle = null,
+        bool @private = false,
+        bool dryRun = false)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            throw new ArgumentException("Source path is required.", nameof(sourcePath));
+        }
+
+        var resolvedSourcePath = Path.GetFullPath(sourcePath.Trim());
+        if (!File.Exists(resolvedSourcePath))
+        {
+            throw new FileNotFoundException("Source media file was not found.", resolvedSourcePath);
+        }
+
+        if ((File.GetAttributes(resolvedSourcePath) & FileAttributes.Directory) == FileAttributes.Directory)
+        {
+            throw new ArgumentException("Source path must be a file, not a directory.", nameof(sourcePath));
+        }
+
+        var sourceInfo = new FileInfo(resolvedSourcePath);
+        if (sourceInfo.Length == 0)
+        {
+            throw new ArgumentException("Source media file cannot be empty.", nameof(sourcePath));
+        }
+
+        var destinationFileName = string.IsNullOrWhiteSpace(fileName) ? Path.GetFileName(resolvedSourcePath) : fileName;
+        var safeFileName = SanitizeFileName(destinationFileName);
+        var resolvedDatabasePath = ResolveDatabasePath();
+        var mediaPath = ResolveMediaPath(resolvedDatabasePath, safeFileName);
+        var mediaHandle = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
+        var change = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var mediaMime = string.IsNullOrWhiteSpace(mime) ? GuessMimeType(safeFileName) : mime.Trim();
+        JsonObject? updatedPersonRecord = null;
+        var wroteFile = false;
+
+        using var connection = OpenConnection(writable: !dryRun);
+        if (!TableExists(connection, "media"))
+        {
+            throw new InvalidOperationException("The media table does not exist in the configured database.");
+        }
+
+        if (!TableExists(connection, "metadata"))
+        {
+            throw new InvalidOperationException("The metadata table does not exist in the configured database.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(personHandle) && !TableExists(connection, "person"))
+        {
+            throw new InvalidOperationException("The person table does not exist in the configured database.");
+        }
+
+        using var transaction = dryRun ? null : connection.BeginTransaction();
+        var mediaIndex = ReadMetadataIndex(connection, transaction, MediaIndexSetting);
+        var grampsId = FormatMediaGrampsId(mediaIndex + 1);
+        var mediaRecord = BuildMediaRecord(mediaHandle, grampsId, mediaPath.StoredPath, mediaMime, description, change, @private);
+
+        if (!string.IsNullOrWhiteSpace(personHandle))
+        {
+            var personJson = ReadJsonData(connection, transaction, "person", personHandle.Trim());
+            updatedPersonRecord = CloneObject(ParseObject(personJson, "Existing person json_data is not a JSON object."));
+            var mediaList = EnsureArray(updatedPersonRecord, "media_list");
+            mediaList.Add(BuildMediaRef(mediaHandle, @private));
+            updatedPersonRecord["change"] = change;
+            ValidatePatchedRecord("person", personHandle.Trim(), updatedPersonRecord);
+            _ = DeserializeRecord("person", updatedPersonRecord);
+        }
+
+        if (!dryRun)
+        {
+            try
+            {
+                Directory.CreateDirectory(mediaPath.Directory);
+                File.Copy(resolvedSourcePath, mediaPath.AbsolutePath);
+                wroteFile = true;
+
+                InsertRecord(connection, transaction, "media", mediaHandle, mediaRecord);
+                UpdateMetadataIndex(connection, transaction, MediaIndexSetting, mediaIndex + 1);
+
+                if (updatedPersonRecord is not null)
+                {
+                    var personModel = DeserializeRecord("person", updatedPersonRecord);
+                    var personColumns = BuildMaterializedColumns("person", personModel, GetTableColumns(connection, transaction, "person"));
+                    var personReferences = ExtractReferences("person", personHandle!.Trim(), updatedPersonRecord, personModel);
+                    UpdateRecord(connection, transaction, "person", personHandle.Trim(), updatedPersonRecord, personColumns);
+                    RebuildReferences(connection, transaction, "person", personHandle.Trim(), updatedPersonRecord, personReferences);
+                }
+
+                transaction!.Commit();
+            }
+            catch
+            {
+                if (wroteFile && File.Exists(mediaPath.AbsolutePath))
+                {
+                    File.Delete(mediaPath.AbsolutePath);
+                }
+
+                throw;
+            }
+        }
+
+        return new ImportMediaResult(
+            dryRun,
+            mediaHandle,
+            grampsId,
+            resolvedSourcePath,
+            mediaPath.AbsolutePath,
+            mediaPath.StoredPath,
+            mediaMime,
+            string.IsNullOrWhiteSpace(personHandle) ? null : personHandle.Trim(),
+            mediaRecord,
+            updatedPersonRecord);
     }
 
     private static string BuildBackupPath(string sourcePath, string? suffix, bool overwrite)
@@ -410,6 +533,186 @@ public sealed partial class GrampsContext
             throw new InvalidOperationException($"No {tableName} record was updated for handle {handle}.");
         }
     }
+
+    private static void InsertRecord(SqliteConnection connection, SqliteTransaction? transaction, string tableName, string handle, JsonObject record)
+    {
+        var model = DeserializeRecord(tableName, record);
+        var tableColumns = GetTableColumns(connection, transaction, tableName);
+        var materializedColumns = BuildMaterializedColumns(tableName, model, tableColumns);
+
+        using var command = CreateCommand(connection, transaction);
+        var columns = new List<string> { "handle", "json_data" };
+        var parameters = new List<string> { "$handle", "$json_data" };
+        command.Parameters.AddWithValue("$handle", handle);
+        command.Parameters.AddWithValue("$json_data", record.ToJsonString(JsonOptions));
+
+        var index = 0;
+        foreach (var column in materializedColumns)
+        {
+            var parameterName = $"$p{index++}";
+            columns.Add(column.Key);
+            parameters.Add(parameterName);
+            command.Parameters.AddWithValue(parameterName, column.Value ?? DBNull.Value);
+        }
+
+        command.CommandText = $"insert into {QuoteIdentifier(tableName)} ({string.Join(", ", columns.Select(QuoteIdentifier))}) values ({string.Join(", ", parameters)})";
+        command.ExecuteNonQuery();
+    }
+
+    private static JsonArray EnsureArray(JsonObject record, string propertyName)
+    {
+        if (record[propertyName] is JsonArray array)
+        {
+            return array;
+        }
+
+        array = [];
+        record[propertyName] = array;
+        return array;
+    }
+
+    private static JsonObject BuildMediaRef(string mediaHandle, bool @private) => new()
+    {
+        ["attribute_list"] = new JsonArray(),
+        ["_class"] = "MediaRef",
+        ["private"] = @private,
+        ["citation_list"] = new JsonArray(),
+        ["note_list"] = new JsonArray(),
+        ["ref"] = mediaHandle
+    };
+
+    private static JsonObject BuildMediaRecord(string handle, string grampsId, string path, string mime, string? description, long change, bool @private) => new()
+    {
+        ["_class"] = "Media",
+        ["handle"] = handle,
+        ["gramps_id"] = grampsId,
+        ["path"] = path,
+        ["mime"] = mime,
+        ["desc"] = description ?? string.Empty,
+        ["checksum"] = string.Empty,
+        ["attribute_list"] = new JsonArray(),
+        ["citation_list"] = new JsonArray(),
+        ["note_list"] = new JsonArray(),
+        ["change"] = change,
+        ["date"] = new JsonObject
+        {
+            ["_class"] = "Date",
+            ["calendar"] = 0,
+            ["modifier"] = 0,
+            ["quality"] = 0,
+            ["dateval"] = new JsonArray(0, 0, 0, false),
+            ["text"] = string.Empty,
+            ["sortval"] = 0,
+            ["newyear"] = 0
+        },
+        ["tag_list"] = new JsonArray(),
+        ["private"] = @private
+    };
+
+    private MediaPath ResolveMediaPath(string databasePath, string safeFileName)
+    {
+        var databaseDirectory = Path.GetDirectoryName(databasePath) ?? ".";
+        var configuredDirectory = string.IsNullOrWhiteSpace(mediaDirectory) ? null : mediaDirectory.Trim();
+        var directory = configuredDirectory is null ? Path.Combine(databaseDirectory, "media") : configuredDirectory;
+        var storeRelativeToDatabase = configuredDirectory is null;
+        var absoluteDirectory = Path.GetFullPath(directory, databaseDirectory);
+        var absolutePath = GetAvailableMediaPath(absoluteDirectory, safeFileName);
+        var storedPath = storeRelativeToDatabase
+            ? Path.Join("media", Path.GetFileName(absolutePath)).Replace(Path.DirectorySeparatorChar, '/')
+            : absolutePath;
+
+        return new MediaPath(absoluteDirectory, absolutePath, storedPath);
+    }
+
+    private static string GetAvailableMediaPath(string directory, string safeFileName)
+    {
+        var candidate = Path.Combine(directory, safeFileName);
+        if (!File.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        var stem = Path.GetFileNameWithoutExtension(safeFileName);
+        var extension = Path.GetExtension(safeFileName);
+        for (var index = 1; index < 10000; index++)
+        {
+            candidate = Path.Combine(directory, $"{stem}-{index}{extension}");
+            if (!File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new IOException("Could not choose a non-conflicting media file path.");
+    }
+
+    private static string SanitizeFileName(string fileName)
+    {
+        var name = Path.GetFileName(fileName.Trim());
+        if (!name.Equals(fileName.Trim(), StringComparison.Ordinal) || name is "." or "..")
+        {
+            throw new ArgumentException("File name must not include a directory path.", nameof(fileName));
+        }
+
+        foreach (var invalidCharacter in Path.GetInvalidFileNameChars())
+        {
+            name = name.Replace(invalidCharacter, '_');
+        }
+
+        name = Regex.Replace(name, "\\s+", " ").Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("File name must contain at least one valid character.", nameof(fileName));
+        }
+
+        return name;
+    }
+
+    private static string GuessMimeType(string fileName)
+    {
+        return Path.GetExtension(fileName).ToLowerInvariant() switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".bmp" => "image/bmp",
+            ".tif" or ".tiff" => "image/tiff",
+            ".pdf" => "application/pdf",
+            ".txt" => "text/plain",
+            _ => "application/octet-stream"
+        };
+    }
+
+    private static int ReadMetadataIndex(SqliteConnection connection, SqliteTransaction? transaction, string setting)
+    {
+        using var command = CreateCommand(connection, transaction);
+        command.CommandText = "select json_data from metadata where setting = $setting limit 1";
+        command.Parameters.AddWithValue("$setting", setting);
+        var jsonData = command.ExecuteScalar() as string;
+        if (string.IsNullOrWhiteSpace(jsonData))
+        {
+            return 0;
+        }
+
+        var node = JsonNode.Parse(jsonData) as JsonObject;
+        return GetLong(node?["value"]) is { } value ? Convert.ToInt32(value) : 0;
+    }
+
+    private static void UpdateMetadataIndex(SqliteConnection connection, SqliteTransaction? transaction, string setting, int value)
+    {
+        using var command = CreateCommand(connection, transaction);
+        command.CommandText = "update metadata set json_data = $json_data where setting = $setting";
+        command.Parameters.AddWithValue("$setting", setting);
+        command.Parameters.AddWithValue("$json_data", new JsonObject
+        {
+            ["type"] = "int",
+            ["value"] = value
+        }.ToJsonString(JsonOptions));
+        command.ExecuteNonQuery();
+    }
+
+    private static string FormatMediaGrampsId(int index) => $"O{index.ToString("D4", CultureInfo.InvariantCulture)}";
 
     private static int RebuildReferences(
         SqliteConnection connection,
@@ -758,4 +1061,6 @@ public sealed partial class GrampsContext
     }
 
     private sealed record RecordReference(string Class, string Handle);
+
+    private sealed record MediaPath(string Directory, string AbsolutePath, string StoredPath);
 }
