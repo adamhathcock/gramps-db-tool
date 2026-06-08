@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="gramps-db-tool.Tests/GrampsDbTool.Tests.csproj" />
+  <Project Path="gramps-db-tool/GrampsDbTool.csproj" />
+</Solution>

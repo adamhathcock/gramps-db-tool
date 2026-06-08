@@ -131,6 +131,70 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.RefArray(root, "media_list"));
     }
 
+    public async Task<FamilyDto?> GetFamilyAsync(string? handle, string? grampsId, CancellationToken cancellationToken = default)
+    {
+        var family = await GetObjectAsync("family", handle, grampsId, cancellationToken);
+        if (family is null)
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(family);
+        var root = document.RootElement;
+        return new FamilyDto(
+            RequiredString(root, "handle"),
+            JsonMapping.String(root, "gramps_id"),
+            JsonMapping.String(root, "father_handle"),
+            JsonMapping.String(root, "mother_handle"),
+            JsonMapping.GrampsTypeName(root, "type"),
+            JsonMapping.ChildRefArray(root, "child_ref_list"),
+            JsonMapping.RefArray(root, "event_ref_list"),
+            JsonMapping.StringArray(root, "note_list"),
+            JsonMapping.StringArray(root, "citation_list"));
+    }
+
+    public async Task<EventDto?> GetEventAsync(string? handle, string? grampsId, CancellationToken cancellationToken = default)
+    {
+        var @event = await GetObjectAsync("event", handle, grampsId, cancellationToken);
+        if (@event is null)
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(@event);
+        var root = document.RootElement;
+        return new EventDto(
+            RequiredString(root, "handle"),
+            JsonMapping.String(root, "gramps_id"),
+            JsonMapping.GrampsTypeName(root, "type"),
+            JsonMapping.String(root, "description"),
+            JsonMapping.String(root, "place"),
+            JsonMapping.StringArray(root, "note_list"),
+            JsonMapping.StringArray(root, "citation_list"),
+            JsonMapping.RefArray(root, "media_list"));
+    }
+
+    public async Task<SourceDto?> GetSourceAsync(string? handle, string? grampsId, CancellationToken cancellationToken = default)
+    {
+        var source = await GetObjectAsync("source", handle, grampsId, cancellationToken);
+        if (source is null)
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(source);
+        var root = document.RootElement;
+        return new SourceDto(
+            RequiredString(root, "handle"),
+            JsonMapping.String(root, "gramps_id"),
+            JsonMapping.String(root, "title"),
+            JsonMapping.String(root, "author"),
+            JsonMapping.String(root, "pubinfo"),
+            JsonMapping.String(root, "abbrev"),
+            JsonMapping.StringArray(root, "note_list"),
+            JsonMapping.RefArray(root, "media_list"));
+    }
+
     private async Task<string?> GetObjectAsync(string tableName, string? handle, string? grampsId, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(handle) && string.IsNullOrWhiteSpace(grampsId))

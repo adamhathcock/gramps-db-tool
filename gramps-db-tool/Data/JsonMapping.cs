@@ -64,6 +64,31 @@ internal static class JsonMapping
         return values;
     }
 
+    public static IReadOnlyList<string> ChildRefArray(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var values = new List<string>();
+        foreach (var item in property.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var value = String(item, "ref") ?? String(item, "child_handle");
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                values.Add(value);
+            }
+        }
+
+        return values;
+    }
+
     public static string DisplayName(JsonElement person)
     {
         if (!person.TryGetProperty("primary_name", out var primaryName) || primaryName.ValueKind != JsonValueKind.Object)

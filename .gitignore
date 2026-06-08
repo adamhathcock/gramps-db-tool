@@ -6,3 +6,4 @@ bun.lock
 bin
 obj
 .DS_Store
+.idea/

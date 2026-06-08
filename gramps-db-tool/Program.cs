@@ -4,6 +4,7 @@ using GrampsDbTool.Safety;
 using GrampsDbTool.Services;
 using GrampsDbTool.Tools;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -17,6 +18,10 @@ builder.Services.AddSingleton(runtimeOptions);
 builder.Services.AddSingleton(grampsConfig);
 builder.Services.AddSingleton(databasePaths);
 builder.Services.AddSingleton<WriteGuard>();
+builder.Services.AddSingleton<SingleWriterLock>();
+builder.Services.AddSingleton<BackupService>();
+builder.Services.AddSingleton<AuditLogService>();
+builder.Services.AddSingleton<GrampsConnectionFactory>();
 builder.Services.AddSingleton<IMediaPathService, MediaPathService>();
 builder.Services.AddSingleton<GrampsRepository>();
 
@@ -27,10 +32,26 @@ builder.Services
     .WithTools<PersonTools>()
     .WithTools<MediaTools>()
     .WithTools<NoteTools>()
-    .WithTools<CitationTools>();
+    .WithTools<CitationTools>()
+    .WithTools<FamilyTools>()
+    .WithTools<EventTools>()
+    .WithTools<SourceTools>();
 
 var app = builder.Build();
+var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
 
+logger.LogInformation("Using Gramps DB Tool config: {ConfigPath}", runtimeOptions.ConfigPath);
+logger.LogInformation("Using Gramps SQLite database: {DatabasePath}", grampsConfig.DatabasePath);
+logger.LogInformation("Using Gramps media base path: {MediaBasePath}", databasePaths.MediaBasePath);
+logger.LogInformation("Write tools are {WriteMode}", runtimeOptions.AllowWrites ? "enabled" : "disabled");
+
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "ok",
+    databaseConfigured = !string.IsNullOrWhiteSpace(grampsConfig.DatabasePath),
+    mediaBasePathConfigured = !string.IsNullOrWhiteSpace(databasePaths.MediaBasePath),
+    writesEnabled = runtimeOptions.AllowWrites
+}));
 app.MapMcp("/gramps");
 
 await app.RunAsync();

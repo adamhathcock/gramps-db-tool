@@ -48,3 +48,37 @@ public sealed record CitationDto(
     IReadOnlyList<string> NoteHandles,
     IReadOnlyList<string> MediaHandles
 );
+
+public sealed record FamilyDto(
+    string Handle,
+    string? GrampsId,
+    string? FatherHandle,
+    string? MotherHandle,
+    string? Type,
+    IReadOnlyList<string> ChildHandles,
+    IReadOnlyList<string> EventHandles,
+    IReadOnlyList<string> NoteHandles,
+    IReadOnlyList<string> CitationHandles
+);
+
+public sealed record EventDto(
+    string Handle,
+    string? GrampsId,
+    string? Type,
+    string? Description,
+    string? PlaceHandle,
+    IReadOnlyList<string> NoteHandles,
+    IReadOnlyList<string> CitationHandles,
+    IReadOnlyList<string> MediaHandles
+);
+
+public sealed record SourceDto(
+    string Handle,
+    string? GrampsId,
+    string? Title,
+    string? Author,
+    string? PublicationInfo,
+    string? Abbreviation,
+    IReadOnlyList<string> NoteHandles,
+    IReadOnlyList<string> MediaHandles
+);
