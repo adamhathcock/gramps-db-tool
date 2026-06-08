@@ -1,14 +1,5 @@
 namespace GrampsDbTool.Models;
 
-public sealed record AuditEntry(
-    DateTimeOffset Timestamp,
-    string ToolName,
-    string ObjectType,
-    string Handle,
-    string BeforeJson,
-    string AfterJson
-);
-
 public sealed record UpdateMediaPathRequest(
     string MediaHandle,
     string NewPath,

@@ -17,6 +17,16 @@ public sealed class RepositoryTests
     }
 
     [Fact]
+    public async Task MetadataReaderRequiresSavePath()
+    {
+        using var database = new TestDatabase(includeSavePath: false);
+        var reader = new GrampsMetadataReader(new GrampsConfig(database.DirectoryPath, database.DatabasePath));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => reader.ReadDatabasePathsAsync());
+        Assert.Contains("save-path", exception.Message);
+    }
+
+    [Fact]
     public async Task RepositoryMapsReadOnlyObjects()
     {
         using var database = new TestDatabase();

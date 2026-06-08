@@ -7,7 +7,7 @@ public sealed record GrampsConfig(
 
 public sealed record GrampsDatabasePaths(
     string MediaBasePath,
-    string? SavePath
+    string SavePath
 );
 
 public sealed record RuntimeOptions(

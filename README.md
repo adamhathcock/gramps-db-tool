@@ -10,7 +10,7 @@ The project favors a narrow safety model: read broadly, write cautiously, and ne
 - Reads Gramps SQLite JSON-backed tables directly.
 - Resolves media paths from Gramps database metadata, not from the working directory.
 - Keeps identity, relationship, fact, event, source, and place data read-only.
-- Includes write-safety infrastructure, but does not expose write tools yet.
+- Exposes the first controlled write tool for media paths, guarded by runtime write enablement and database-derived backups.
 
 Current read-only tools:
 
@@ -23,11 +23,15 @@ Current read-only tools:
 - `get_note`
 - `get_media`
 
+Current write tools:
+
+- `update_media_path`
+
 ## Safety Model
 
 Writes are disabled by default and can only be enabled at runtime with `--allow-writes` or `GRAMPS_ALLOW_WRITES=1`. The config file is intentionally not allowed to enable writes.
 
-Future write tools are planned only for controlled edits:
+Write tools are planned only for controlled edits:
 
 - media paths
 - notes
@@ -114,4 +118,4 @@ Next write milestones:
 4. `create_citation`
 5. `update_citation`
 
-Before any write tool is exposed, writes must pass through the runtime write gate, single-writer lock, backup service, validation, and audit logging.
+Every write must pass through the runtime write gate, single-writer lock, database-derived backup service, and validation.

@@ -6,11 +6,6 @@ public sealed class BackupService(GrampsConfig config, GrampsDatabasePaths datab
 {
     public async Task<string> CreateBackupAsync(CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(databasePaths.SavePath))
-        {
-            throw new InvalidOperationException("Cannot create a write backup because Gramps save path metadata is missing or empty.");
-        }
-
         if (!File.Exists(config.DatabasePath))
         {
             throw new FileNotFoundException($"Gramps SQLite database not found: {config.DatabasePath}", config.DatabasePath);

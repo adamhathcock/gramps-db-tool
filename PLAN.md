@@ -94,8 +94,7 @@ Planned future config file:
 {
   "databasePath": "/path/to/sqlite.db",
   "allowAbsoluteMediaPaths": false,
-  "allowMediaPathsOutsideRoot": false,
-  "auditLogPath": null
+  "allowMediaPathsOutsideRoot": false
 }
 ```
 
@@ -353,18 +352,6 @@ Every write should:
 3. validate the target object
 4. validate the patch
 5. apply update
-6. write an audit log
-
-```csharp
-public sealed record AuditEntry(
-    DateTimeOffset Timestamp,
-    string ToolName,
-    string ObjectType,
-    string Handle,
-    string BeforeJson,
-    string AfterJson
-);
-```
 
 Backup path rules:
 

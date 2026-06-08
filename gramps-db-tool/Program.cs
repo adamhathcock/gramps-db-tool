@@ -20,10 +20,10 @@ builder.Services.AddSingleton(databasePaths);
 builder.Services.AddSingleton<WriteGuard>();
 builder.Services.AddSingleton<SingleWriterLock>();
 builder.Services.AddSingleton<BackupService>();
-builder.Services.AddSingleton<AuditLogService>();
 builder.Services.AddSingleton<GrampsConnectionFactory>();
 builder.Services.AddSingleton<IMediaPathService, MediaPathService>();
 builder.Services.AddSingleton<GrampsRepository>();
+builder.Services.AddSingleton<MediaWriteService>();
 
 builder.Services
     .AddMcpServer()
