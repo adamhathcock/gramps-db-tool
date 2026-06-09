@@ -33,6 +33,22 @@ public sealed class WriteSafetyTests
     }
 
     [Fact]
+    public async Task BackupServiceUsesConfiguredBackupPathOverDatabaseSavePath()
+    {
+        using var database = new TestDatabase();
+        var configuredBackupPath = Path.Combine(database.DirectoryPath, "configured-backups");
+        var service = new BackupService(
+            new GrampsConfig(database.DirectoryPath, database.DatabasePath, configuredBackupPath),
+            new GrampsDatabasePaths(database.MediaPath, database.SavePath));
+
+        var backupPath = await service.CreateBackupAsync();
+
+        Assert.True(File.Exists(backupPath));
+        Assert.Equal(configuredBackupPath, Path.GetDirectoryName(backupPath));
+        Assert.Empty(Directory.GetFiles(database.SavePath, "gramps-db-tool-*.sqlite.db"));
+    }
+
+    [Fact]
     public async Task UpdateMediaPathRejectsWhenWritesAreDisabled()
     {
         using var database = new TestDatabase();

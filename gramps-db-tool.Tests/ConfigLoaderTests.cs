@@ -40,4 +40,35 @@ public sealed class ConfigLoaderTests
 
         Assert.Equal(database.DatabasePath, config.DatabasePath);
     }
+
+    [Fact]
+    public void LoadConfigResolvesRelativeBackupPathAgainstConfigDirectory()
+    {
+        using var database = new TestDatabase();
+        var configPath = database.WriteConfig("""
+            {
+              "databasePath": "sqlite.db",
+              "backupPath": "tool-backups"
+            }
+            """);
+
+        var config = ConfigLoader.LoadConfig(configPath);
+
+        Assert.Equal(Path.Combine(database.DirectoryPath, "tool-backups"), config.BackupPath);
+    }
+
+    [Fact]
+    public void LoadConfigRejectsEmptyBackupPath()
+    {
+        using var database = new TestDatabase();
+        var configPath = database.WriteConfig("""
+            {
+              "databasePath": "sqlite.db",
+              "backupPath": ""
+            }
+            """);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => ConfigLoader.LoadConfig(configPath));
+        Assert.Contains("backupPath", exception.Message);
+    }
 }

@@ -11,9 +11,10 @@ public sealed class BackupService(GrampsConfig config, GrampsDatabasePaths datab
             throw new FileNotFoundException($"Gramps SQLite database not found: {config.DatabasePath}", config.DatabasePath);
         }
 
-        Directory.CreateDirectory(databasePaths.SavePath);
+        var backupDirectory = config.BackupPath ?? databasePaths.SavePath;
+        Directory.CreateDirectory(backupDirectory);
         var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
-        var backupPath = Path.Combine(databasePaths.SavePath, $"gramps-db-tool-{timestamp}.sqlite.db");
+        var backupPath = Path.Combine(backupDirectory, $"gramps-db-tool-{timestamp}.sqlite.db");
 
         await using var source = File.OpenRead(config.DatabasePath);
         await using var destination = File.Create(backupPath);

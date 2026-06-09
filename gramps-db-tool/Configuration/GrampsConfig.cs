@@ -2,7 +2,8 @@ namespace GrampsDbTool.Configuration;
 
 public sealed record GrampsConfig(
     string ConfigDirectory,
-    string DatabasePath
+    string DatabasePath,
+    string? BackupPath = null
 );
 
 public sealed record GrampsDatabasePaths(

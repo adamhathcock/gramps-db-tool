@@ -78,12 +78,32 @@ public static class ConfigLoader
             throw new InvalidOperationException("allowWrites is not supported in config. Use --allow-writes or GRAMPS_ALLOW_WRITES for runtime write enablement.");
         }
 
+        string? backupPath = null;
+        if (root.TryGetProperty("backupPath", out var backupPathElement))
+        {
+            if (backupPathElement.ValueKind != JsonValueKind.String)
+            {
+                throw new InvalidOperationException($"Config file {configPath} has a non-string backupPath property.");
+            }
+
+            backupPath = backupPathElement.GetString();
+            if (string.IsNullOrWhiteSpace(backupPath))
+            {
+                throw new InvalidOperationException($"Config file {configPath} has an empty backupPath property.");
+            }
+        }
+
         var configDirectory = Path.GetDirectoryName(Path.GetFullPath(configPath)) ?? Directory.GetCurrentDirectory();
         var resolvedDatabasePath = Path.IsPathRooted(databasePath)
             ? databasePath
             : Path.GetFullPath(databasePath, configDirectory);
+        var resolvedBackupPath = backupPath is null
+            ? null
+            : Path.IsPathRooted(backupPath)
+                ? backupPath
+                : Path.GetFullPath(backupPath, configDirectory);
 
-        return new GrampsConfig(configDirectory, resolvedDatabasePath);
+        return new GrampsConfig(configDirectory, resolvedDatabasePath, resolvedBackupPath);
     }
 
     private static bool IsTruthy(string? value)

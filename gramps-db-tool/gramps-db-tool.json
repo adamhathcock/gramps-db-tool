@@ -1,3 +1,4 @@
 {
-  "databasePath": "/Users/adam/Library/Application Support/gramps/grampsdb/6a2127e6/sqlite.db"
+  "databasePath": "/Users/adam/Library/Application Support/gramps/grampsdb/6a2127e6/sqlite.db",
+  "backupPath": "backups"
 }
