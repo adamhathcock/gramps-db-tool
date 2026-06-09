@@ -54,6 +54,56 @@ public sealed class RepositoryTests
             item => Assert.Equal("media1", item.Handle));
         Assert.Equal("A note", note?.Text);
         Assert.Equal("source1", citation?.SourceHandle);
+        Assert.Equal(["tag1"], person!.TagHandles);
+        Assert.Equal(["tag2"], family!.TagHandles);
+        Assert.Equal(["tag1"], @event!.TagHandles);
+        Assert.Equal(["tag2"], source!.TagHandles);
+        Assert.Equal(["tag1", "tag2"], media!.TagHandles);
+        Assert.Equal(["tag2"], note!.TagHandles);
+        Assert.Equal(["tag1"], citation!.TagHandles);
+    }
+
+    [Fact]
+    public async Task RepositoryListsAndGetsTags()
+    {
+        using var database = new TestDatabase();
+        var config = new GrampsConfig(database.DirectoryPath, database.DatabasePath,null);
+        var paths = await new GrampsMetadataReader(config).ReadDatabasePathsAsync();
+        var repository = new GrampsRepository(config, new MediaPathService(paths));
+
+        var tags = await repository.ListTagsAsync();
+        var tagsByHandle = await repository.GetTagsAsync(["tag2", "missing", "tag1"]);
+        var tagsByName = await repository.GetTagsAsync(null, ["Missing Media", "missing", "Needs Review"]);
+
+        Assert.Collection(tags,
+            tag => Assert.Equal("Needs Review", tag.Name),
+            tag => Assert.Equal("Missing Media", tag.Name));
+        Assert.Collection(tagsByHandle,
+            tag => Assert.Equal("tag2", tag.Handle),
+            tag => Assert.Equal("tag1", tag.Handle));
+        Assert.Collection(tagsByName,
+            tag => Assert.Equal("tag2", tag.Handle),
+            tag => Assert.Equal("tag1", tag.Handle));
+    }
+
+    [Fact]
+    public async Task RepositoryFindsObjectsByTag()
+    {
+        using var database = new TestDatabase();
+        var config = new GrampsConfig(database.DirectoryPath, database.DatabasePath,null);
+        var paths = await new GrampsMetadataReader(config).ReadDatabasePathsAsync();
+        var repository = new GrampsRepository(config, new MediaPathService(paths));
+
+        var taggedObjects = await repository.FindObjectsByTagAsync("tag1", null);
+        var mediaOnly = await repository.FindObjectsByTagAsync(null, "Needs Review", ["media"]);
+
+        Assert.Contains(taggedObjects, item => item.ObjectType == "person" && item.Handle == "person1");
+        Assert.Contains(taggedObjects, item => item.ObjectType == "event" && item.Handle == "event1");
+        Assert.Contains(taggedObjects, item => item.ObjectType == "place" && item.Handle == "place1");
+        Assert.Contains(taggedObjects, item => item.ObjectType == "citation" && item.Handle == "citation1");
+        Assert.Contains(taggedObjects, item => item.ObjectType == "media" && item.Handle == "media1" && item.TagHandles.SequenceEqual(["tag1", "tag2"]));
+        Assert.Single(mediaOnly);
+        Assert.Equal("media1", mediaOnly[0].Handle);
     }
 
     [Fact]
@@ -82,6 +132,25 @@ public sealed class RepositoryTests
         var neitherException = await Assert.ThrowsAsync<ArgumentException>(() => repository.GetMediaAsync((IReadOnlyList<string>?)null, null));
         var emptyException = await Assert.ThrowsAsync<ArgumentException>(() => repository.GetMediaAsync(null, [""]));
         var tooManyException = await Assert.ThrowsAsync<ArgumentException>(() => repository.GetMediaAsync(null, Enumerable.Range(0, 101).Select(index => $"O{index:0000}").ToArray()));
+
+        Assert.Contains("either", bothException.Message);
+        Assert.Contains("either", neitherException.Message);
+        Assert.Contains("must not be empty", emptyException.Message);
+        Assert.Contains("At most 100", tooManyException.Message);
+    }
+
+    [Fact]
+    public async Task RepositoryRejectsInvalidTagLookupArguments()
+    {
+        using var database = new TestDatabase();
+        var config = new GrampsConfig(database.DirectoryPath, database.DatabasePath,null);
+        var paths = await new GrampsMetadataReader(config).ReadDatabasePathsAsync();
+        var repository = new GrampsRepository(config, new MediaPathService(paths));
+
+        var bothException = await Assert.ThrowsAsync<ArgumentException>(() => repository.GetTagsAsync(["tag1"], ["Needs Review"]));
+        var neitherException = await Assert.ThrowsAsync<ArgumentException>(() => repository.GetTagsAsync(null, null));
+        var emptyException = await Assert.ThrowsAsync<ArgumentException>(() => repository.GetTagsAsync(null, [""]));
+        var tooManyException = await Assert.ThrowsAsync<ArgumentException>(() => repository.GetTagsAsync(Enumerable.Range(0, 101).Select(index => $"tag{index}").ToArray()));
 
         Assert.Contains("either", bothException.Message);
         Assert.Contains("either", neitherException.Message);

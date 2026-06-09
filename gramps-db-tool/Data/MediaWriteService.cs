@@ -15,32 +15,44 @@ public sealed class MediaWriteService(
     GrampsRepository repository,
     IMediaPathService mediaPathService)
 {
-    public async Task<MediaDto?> UpdateMediaPathAsync(UpdateMediaPathRequest request, CancellationToken cancellationToken = default)
+    public async Task<MediaDto?> UpdateMediaAsync(UpdateMediaRequest request, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.MediaHandle))
         {
             throw new ArgumentException("Media handle is required.", nameof(request));
         }
 
-        if (string.IsNullOrWhiteSpace(request.NewPath))
+        if (request.NewPath is not null && string.IsNullOrWhiteSpace(request.NewPath))
         {
             throw new ArgumentException("New media path is required.", nameof(request));
         }
+
+        if (request.NewPath is null && request.TagHandles is null)
+        {
+            throw new ArgumentException("Supply a new media path and/or tag handles.", nameof(request));
+        }
+
+        ValidateTagHandles(request.TagHandles);
 
         writeGuard.RequireWritesEnabled();
 
         using var lockHandle = await singleWriterLock.AcquireAsync(cancellationToken);
         await backupService.CreateBackupAsync(cancellationToken);
 
-        var storedPath = NormalizeStoredPath(request);
         var change = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         await using var connection = connectionFactory.CreateReadWriteConnection();
         await connection.OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
-        var beforeJson = await ReadMediaJsonAsync(connection, transaction, request.MediaHandle, cancellationToken);
-        var afterJson = UpdateMediaJson(beforeJson, storedPath, change);
+        if (request.TagHandles is not null)
+        {
+            await RequireTagsExistAsync(connection, transaction, request.TagHandles, cancellationToken);
+        }
+
+        var media = await ReadMediaAsync(connection, transaction, request.MediaHandle, cancellationToken);
+        var storedPath = request.NewPath is null ? media.Path : NormalizeStoredPath(request);
+        var afterJson = UpdateMediaJson(media.Json, storedPath, request.NewPath is not null, request.TagHandles, change);
 
         await using var command = connection.CreateCommand();
         command.Transaction = (SqliteTransaction)transaction;
@@ -50,7 +62,7 @@ public sealed class MediaWriteService(
             WHERE handle = $handle
             """;
         command.Parameters.AddWithValue("$json", afterJson);
-        command.Parameters.AddWithValue("$path", storedPath);
+        command.Parameters.AddWithValue("$path", (object?)storedPath ?? DBNull.Value);
         command.Parameters.AddWithValue("$change", change);
         command.Parameters.AddWithValue("$handle", request.MediaHandle);
 
@@ -66,43 +78,110 @@ public sealed class MediaWriteService(
         return updated;
     }
 
-    private string NormalizeStoredPath(UpdateMediaPathRequest request)
+    private string NormalizeStoredPath(UpdateMediaRequest request)
     {
-        if (request.ConvertToRelative && Path.IsPathRooted(request.NewPath))
+        var newPath = request.NewPath ?? throw new InvalidOperationException("New media path is required.");
+        if (request.ConvertToRelative && Path.IsPathRooted(newPath))
         {
-            var relativePath = mediaPathService.ToRelativePath(request.NewPath);
+            var relativePath = mediaPathService.ToRelativePath(newPath);
             mediaPathService.ValidateMediaPath(relativePath);
             return relativePath;
         }
 
-        mediaPathService.ValidateMediaPath(request.NewPath);
-        return request.NewPath;
+        mediaPathService.ValidateMediaPath(newPath);
+        return newPath;
     }
 
-    private static async Task<string> ReadMediaJsonAsync(SqliteConnection connection, System.Data.Common.DbTransaction transaction, string mediaHandle, CancellationToken cancellationToken)
+    private static async Task<MediaRecord> ReadMediaAsync(SqliteConnection connection, System.Data.Common.DbTransaction transaction, string mediaHandle, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = (SqliteTransaction)transaction;
-        command.CommandText = "SELECT json_data FROM media WHERE handle = $handle LIMIT 1";
+        command.CommandText = "SELECT json_data, path FROM media WHERE handle = $handle LIMIT 1";
         command.Parameters.AddWithValue("$handle", mediaHandle);
 
-        var result = await command.ExecuteScalarAsync(cancellationToken);
-        if (result is not string json || string.IsNullOrWhiteSpace(json))
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken) || reader.GetValue(0) is not string json || string.IsNullOrWhiteSpace(json))
         {
             throw new InvalidOperationException("Media object not found or does not contain JSON data.");
         }
 
-        return json;
+        return new MediaRecord(json, reader.IsDBNull(1) ? null : reader.GetString(1));
     }
 
-    private static string UpdateMediaJson(string beforeJson, string storedPath, long change)
+    private static string UpdateMediaJson(string beforeJson, string? storedPath, bool updatePath, IReadOnlyList<string>? tagHandles, long change)
     {
         var node = JsonNode.Parse(beforeJson)?.AsObject()
             ?? throw new InvalidOperationException("Media JSON data is not an object.");
 
-        node["path"] = storedPath;
+        if (updatePath)
+        {
+            node["path"] = storedPath;
+        }
+
+        if (tagHandles is not null)
+        {
+            var tagList = new JsonArray();
+            foreach (var tagHandle in tagHandles)
+            {
+                tagList.Add(tagHandle);
+            }
+
+            node["tag_list"] = tagList;
+        }
+
         node["change"] = change;
 
         return node.ToJsonString(new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }
+
+    private static void ValidateTagHandles(IReadOnlyList<string>? tagHandles)
+    {
+        if (tagHandles is null)
+        {
+            return;
+        }
+
+        if (tagHandles.Any(static handle => string.IsNullOrWhiteSpace(handle)))
+        {
+            throw new ArgumentException("Tag handles must not be empty.");
+        }
+
+        var duplicate = tagHandles.GroupBy(static handle => handle, StringComparer.Ordinal).FirstOrDefault(static group => group.Count() > 1)?.Key;
+        if (duplicate is not null)
+        {
+            throw new ArgumentException($"Duplicate tag handle supplied: {duplicate}.");
+        }
+    }
+
+    private static async Task RequireTagsExistAsync(SqliteConnection connection, System.Data.Common.DbTransaction transaction, IReadOnlyList<string> tagHandles, CancellationToken cancellationToken)
+    {
+        if (tagHandles.Count == 0)
+        {
+            return;
+        }
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        var parameters = tagHandles.Select((handle, index) => new { Handle = handle, Parameter = $"$tag{index}" }).ToArray();
+        command.CommandText = $"SELECT handle FROM tag WHERE handle IN ({string.Join(", ", parameters.Select(static parameter => parameter.Parameter))})";
+        foreach (var parameter in parameters)
+        {
+            command.Parameters.AddWithValue(parameter.Parameter, parameter.Handle);
+        }
+
+        var existingHandles = new HashSet<string>(StringComparer.Ordinal);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            existingHandles.Add(reader.GetString(0));
+        }
+
+        var missingHandles = tagHandles.Where(handle => !existingHandles.Contains(handle)).ToArray();
+        if (missingHandles.Length > 0)
+        {
+            throw new InvalidOperationException($"Unknown tag handle(s): {string.Join(", ", missingHandles)}.");
+        }
+    }
+
+    private sealed record MediaRecord(string Json, string? Path);
 }

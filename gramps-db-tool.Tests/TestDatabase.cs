@@ -49,8 +49,11 @@ internal sealed class TestDatabase : IDisposable
             CREATE TABLE event (handle VARCHAR(50) PRIMARY KEY NOT NULL, json_data TEXT, gramps_id TEXT, description TEXT, place VARCHAR(50), change INTEGER, private INTEGER);
             CREATE TABLE source (handle VARCHAR(50) PRIMARY KEY NOT NULL, json_data TEXT, gramps_id TEXT, title TEXT, author TEXT, pubinfo TEXT, abbrev TEXT, change INTEGER, private INTEGER);
             CREATE TABLE media (handle VARCHAR(50) PRIMARY KEY NOT NULL, json_data TEXT, gramps_id TEXT, path TEXT, mime TEXT, desc TEXT, checksum TEXT, change INTEGER, private INTEGER);
+            CREATE TABLE place (handle VARCHAR(50) PRIMARY KEY NOT NULL, json_data TEXT, gramps_id TEXT, title TEXT, long TEXT, lat TEXT, change INTEGER, private INTEGER);
+            CREATE TABLE repository (handle VARCHAR(50) PRIMARY KEY NOT NULL, json_data TEXT, gramps_id TEXT, type INTEGER, name TEXT, change INTEGER, private INTEGER);
             CREATE TABLE note (handle VARCHAR(50) PRIMARY KEY NOT NULL, json_data TEXT, gramps_id TEXT, format INTEGER, change INTEGER, private INTEGER);
             CREATE TABLE citation (handle VARCHAR(50) PRIMARY KEY NOT NULL, json_data TEXT, gramps_id TEXT, page TEXT, confidence INTEGER, source_handle VARCHAR(50), change INTEGER, private INTEGER);
+            CREATE TABLE tag (handle VARCHAR(50) PRIMARY KEY NOT NULL, json_data TEXT, name TEXT, color VARCHAR(13), priority INTEGER, change INTEGER);
             """);
 
         if (includeMediaPath)
@@ -63,32 +66,41 @@ internal sealed class TestDatabase : IDisposable
             InsertMetadata(connection, "save-path", SavePath);
         }
 
+        InsertTag(connection, "tag1", "Needs Review", "#ff0000", 0, 1000);
+        InsertTag(connection, "tag2", "Missing Media", "#ff7800", 1, 1001);
+
         InsertObject(connection, "person", "person1", "I0001", $$"""
-            {"_class":"Person","handle":"person1","gramps_id":"I0001","gender":1,"primary_name":{"first_name":"Ada","surname_list":[{"surname":"Lovelace"}]},"event_ref_list":[{"ref":"event1"}],"family_list":["family1"],"parent_family_list":[],"media_list":[{"ref":"media1"}],"note_list":["note1"],"citation_list":["citation1"]}
+            {"_class":"Person","handle":"person1","gramps_id":"I0001","gender":1,"primary_name":{"first_name":"Ada","surname_list":[{"surname":"Lovelace"}]},"event_ref_list":[{"ref":"event1"}],"family_list":["family1"],"parent_family_list":[],"media_list":[{"ref":"media1"}],"note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag1"]}
             """, "given_name", "Ada", "surname", "Lovelace");
         InsertObject(connection, "person", "person2", "I0002", $$"""
-            {"_class":"Person","handle":"person2","gramps_id":"I0002","gender":1,"primary_name":{"first_name":"Charles","surname_list":[{"surname":"Babbage"}]},"event_ref_list":[],"family_list":["family1"],"parent_family_list":[],"media_list":[],"note_list":[],"citation_list":[]}
+            {"_class":"Person","handle":"person2","gramps_id":"I0002","gender":1,"primary_name":{"first_name":"Charles","surname_list":[{"surname":"Babbage"}]},"event_ref_list":[],"family_list":["family1"],"parent_family_list":[],"media_list":[],"note_list":[],"citation_list":[],"tag_list":[]}
             """, "given_name", "Charles", "surname", "Babbage");
         InsertObject(connection, "family", "family1", "F0001", """
-            {"_class":"Family","handle":"family1","gramps_id":"F0001","father_handle":"person2","mother_handle":"person1","child_ref_list":[{"ref":"person3"}],"type":{"value":0,"string":"Married"},"event_ref_list":[{"ref":"event1"}],"note_list":["note1"],"citation_list":["citation1"]}
+            {"_class":"Family","handle":"family1","gramps_id":"F0001","father_handle":"person2","mother_handle":"person1","child_ref_list":[{"ref":"person3"}],"type":{"value":0,"string":"Married"},"event_ref_list":[{"ref":"event1"}],"note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag2"]}
             """);
         InsertObject(connection, "event", "event1", "E0001", """
-            {"_class":"Event","handle":"event1","gramps_id":"E0001","type":{"value":12,"string":"Birth"},"description":"Born","place":"place1","note_list":["note1"],"citation_list":["citation1"],"media_list":[{"ref":"media1"}]}
+            {"_class":"Event","handle":"event1","gramps_id":"E0001","type":{"value":12,"string":"Birth"},"description":"Born","place":"place1","note_list":["note1"],"citation_list":["citation1"],"media_list":[{"ref":"media1"}],"tag_list":["tag1"]}
             """, "description", "Born");
         InsertObject(connection, "source", "source1", "S0001", """
-            {"_class":"Source","handle":"source1","gramps_id":"S0001","title":"Register","author":"Clerk","pubinfo":"Archive","abbrev":"REG","note_list":["note1"],"media_list":[{"ref":"media1"}]}
+            {"_class":"Source","handle":"source1","gramps_id":"S0001","title":"Register","author":"Clerk","pubinfo":"Archive","abbrev":"REG","note_list":["note1"],"media_list":[{"ref":"media1"}],"tag_list":["tag2"]}
             """, "title", "Register");
         InsertObject(connection, "media", "media1", "O0001", """
-            {"_class":"Media","handle":"media1","gramps_id":"O0001","path":"photos/ada.jpg","mime":"image/jpeg","desc":"Portrait","checksum":"abc","note_list":["note1"],"citation_list":["citation1"]}
+            {"_class":"Media","handle":"media1","gramps_id":"O0001","path":"photos/ada.jpg","mime":"image/jpeg","desc":"Portrait","checksum":"abc","note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag1","tag2"]}
             """, "path", "photos/ada.jpg");
         InsertObject(connection, "media", "media2", "O0002", """
-            {"_class":"Media","handle":"media2","gramps_id":"O0002","path":"photos/charles.jpg","mime":"image/jpeg","desc":"Portrait","checksum":"def","note_list":[],"citation_list":[]}
+            {"_class":"Media","handle":"media2","gramps_id":"O0002","path":"photos/charles.jpg","mime":"image/jpeg","desc":"Portrait","checksum":"def","note_list":[],"citation_list":[],"tag_list":[]}
             """, "path", "photos/charles.jpg");
+        InsertObject(connection, "place", "place1", "P0001", """
+            {"_class":"Place","handle":"place1","gramps_id":"P0001","title":"London","tag_list":["tag1"]}
+            """, "title", "London");
+        InsertObject(connection, "repository", "repo1", "R0001", """
+            {"_class":"Repository","handle":"repo1","gramps_id":"R0001","name":"Archive","tag_list":["tag2"]}
+            """, "name", "Archive");
         InsertObject(connection, "note", "note1", "N0001", """
-            {"_class":"Note","handle":"note1","gramps_id":"N0001","text":{"string":"A note"},"format":0,"type":{"value":0,"string":"General"}}
+            {"_class":"Note","handle":"note1","gramps_id":"N0001","text":{"string":"A note"},"format":0,"type":{"value":0,"string":"General"},"tag_list":["tag2"]}
             """, "format", 0);
         InsertObject(connection, "citation", "citation1", "C0001", """
-            {"_class":"Citation","handle":"citation1","gramps_id":"C0001","page":"p. 1","confidence":3,"source_handle":"source1","note_list":["note1"],"media_list":[{"ref":"media1"}]}
+            {"_class":"Citation","handle":"citation1","gramps_id":"C0001","page":"p. 1","confidence":3,"source_handle":"source1","note_list":["note1"],"media_list":[{"ref":"media1"}],"tag_list":["tag1"]}
             """, "page", "p. 1", "confidence", 3, "source_handle", "source1");
     }
 
@@ -130,6 +142,22 @@ internal sealed class TestDatabase : IDisposable
             command.Parameters.AddWithValue($"$p{i}", indexedValues[i + 1]);
         }
 
+        command.ExecuteNonQuery();
+    }
+
+    private static void InsertTag(SqliteConnection connection, string handle, string name, string color, int priority, long change)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO tag (handle, json_data, name, color, priority, change)
+            VALUES ($handle, $json, $name, $color, $priority, $change)
+            """;
+        command.Parameters.AddWithValue("$handle", handle);
+        command.Parameters.AddWithValue("$json", JsonSerializer.Serialize(new { _class = "Tag", handle, name, color, priority, change }));
+        command.Parameters.AddWithValue("$name", name);
+        command.Parameters.AddWithValue("$color", color);
+        command.Parameters.AddWithValue("$priority", priority);
+        command.Parameters.AddWithValue("$change", change);
         command.ExecuteNonQuery();
     }
 }

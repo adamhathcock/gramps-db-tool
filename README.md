@@ -10,7 +10,7 @@ The project favors a narrow safety model: read broadly, write cautiously, and ne
 - Reads Gramps SQLite JSON-backed tables directly.
 - Resolves media paths from Gramps database metadata, not from the working directory.
 - Keeps identity, relationship, fact, event, source, and place data read-only.
-- Exposes the first controlled write tool for media paths, guarded by runtime write enablement and database-derived backups.
+- Exposes controlled write tooling for media paths and media tags, guarded by runtime write enablement and database-derived backups.
 
 Current read-only tools:
 
@@ -22,10 +22,13 @@ Current read-only tools:
 - `get_citation`
 - `get_note`
 - `get_media`
+- `list_tags`
+- `get_tags`
+- `find_objects_by_tag`
 
 Current write tools:
 
-- `update_media_path`
+- `update_media`
 
 ## Safety Model
 
@@ -33,11 +36,11 @@ Writes are disabled by default and can only be enabled at runtime with `--allow-
 
 Write tools are planned only for controlled edits:
 
-- media paths
+- media paths and media tags
 - notes
 - citations
 
-The server will continue to block direct edits to names, IDs, relationships, event facts, places, tags, backlinks, and raw serialized object data.
+The server will continue to block direct edits to names, IDs, relationships, event facts, places, backlinks, and raw serialized object data. Tag edits are allowed only through explicit controlled update tools such as `update_media`; there is no general tag/object mutation API.
 
 ## Configuration
 
@@ -112,7 +115,7 @@ dotnet test "gramps-db-tool.Tests/GrampsDbTool.Tests.csproj"
 
 Next write milestones:
 
-1. `update_media_path`
+1. `update_media`
 2. `create_note`
 3. `update_note`
 4. `create_citation`

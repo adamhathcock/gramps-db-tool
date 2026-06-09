@@ -19,14 +19,15 @@ public sealed class MediaTools(GrampsRepository repository, MediaWriteService me
         return repository.GetMediaAsync(handles, grampsIds, cancellationToken);
     }
 
-    [McpServerTool(Name = "update_media_path", ReadOnly = false, Destructive = false, Idempotent = false)]
-    [Description("Update one Gramps media object's path. Requires runtime write enablement and creates a database-derived backup before mutation.")]
-    public Task<MediaDto?> UpdateMediaPath(
+    [McpServerTool(Name = "update_media", ReadOnly = false, Destructive = false, Idempotent = false)]
+    [Description("Update one Gramps media object's path and/or complete tag list. Requires runtime write enablement and creates a database-derived backup before mutation.")]
+    public Task<MediaDto?> UpdateMedia(
         [Description("Gramps media handle to update.")] string mediaHandle,
-        [Description("New media path. Relative paths are resolved against the Gramps media root. Absolute paths require convertToRelative and must be inside the media root.")] string newPath,
+        [Description("Optional new media path. Relative paths are resolved against the Gramps media root. Absolute paths require convertToRelative and must be inside the media root.")] string? newPath = null,
         [Description("Convert an absolute path inside the media root to a stored relative path before saving.")] bool convertToRelative = false,
+        [Description("Optional complete desired final tag handle list. Included tags are kept or added; omitted tags are removed. Empty list clears all tags.")] IReadOnlyList<string>? tagHandles = null,
         CancellationToken cancellationToken = default)
     {
-        return mediaWriteService.UpdateMediaPathAsync(new UpdateMediaPathRequest(mediaHandle, newPath, convertToRelative), cancellationToken);
+        return mediaWriteService.UpdateMediaAsync(new UpdateMediaRequest(mediaHandle, newPath, convertToRelative, tagHandles), cancellationToken);
     }
 }

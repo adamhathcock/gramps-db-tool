@@ -17,7 +17,8 @@ public sealed record PersonDto(
     IReadOnlyList<string> ParentFamilyHandles,
     IReadOnlyList<string> MediaHandles,
     IReadOnlyList<string> NoteHandles,
-    IReadOnlyList<string> CitationHandles
+    IReadOnlyList<string> CitationHandles,
+    IReadOnlyList<string> TagHandles
 );
 
 public sealed record MediaDto(
@@ -29,7 +30,8 @@ public sealed record MediaDto(
     string? Description,
     string? Checksum,
     IReadOnlyList<string> NoteHandles,
-    IReadOnlyList<string> CitationHandles
+    IReadOnlyList<string> CitationHandles,
+    IReadOnlyList<string> TagHandles
 );
 
 public sealed record NoteDto(
@@ -37,7 +39,8 @@ public sealed record NoteDto(
     string? GrampsId,
     string Text,
     int? Format,
-    string? Type
+    string? Type,
+    IReadOnlyList<string> TagHandles
 );
 
 public sealed record CitationDto(
@@ -47,7 +50,8 @@ public sealed record CitationDto(
     int? Confidence,
     string? SourceHandle,
     IReadOnlyList<string> NoteHandles,
-    IReadOnlyList<string> MediaHandles
+    IReadOnlyList<string> MediaHandles,
+    IReadOnlyList<string> TagHandles
 );
 
 public sealed record FamilyDto(
@@ -59,7 +63,8 @@ public sealed record FamilyDto(
     IReadOnlyList<string> ChildHandles,
     IReadOnlyList<string> EventHandles,
     IReadOnlyList<string> NoteHandles,
-    IReadOnlyList<string> CitationHandles
+    IReadOnlyList<string> CitationHandles,
+    IReadOnlyList<string> TagHandles
 );
 
 public sealed record EventDto(
@@ -70,7 +75,8 @@ public sealed record EventDto(
     string? PlaceHandle,
     IReadOnlyList<string> NoteHandles,
     IReadOnlyList<string> CitationHandles,
-    IReadOnlyList<string> MediaHandles
+    IReadOnlyList<string> MediaHandles,
+    IReadOnlyList<string> TagHandles
 );
 
 public sealed record SourceDto(
@@ -81,5 +87,22 @@ public sealed record SourceDto(
     string? PublicationInfo,
     string? Abbreviation,
     IReadOnlyList<string> NoteHandles,
-    IReadOnlyList<string> MediaHandles
+    IReadOnlyList<string> MediaHandles,
+    IReadOnlyList<string> TagHandles
+);
+
+public sealed record TagDto(
+    string Handle,
+    string Name,
+    string? Color,
+    int? Priority,
+    long? Change
+);
+
+public sealed record TaggedObjectDto(
+    string ObjectType,
+    string Handle,
+    string? GrampsId,
+    string Label,
+    IReadOnlyList<string> TagHandles
 );

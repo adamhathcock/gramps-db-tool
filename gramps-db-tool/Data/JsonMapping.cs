@@ -18,6 +18,13 @@ internal static class JsonMapping
             : null;
     }
 
+    public static long? Long(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.Number && property.TryGetInt64(out var value)
+            ? value
+            : null;
+    }
+
     public static IReadOnlyList<string> StringArray(JsonElement element, string propertyName)
     {
         if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.Array)

@@ -40,7 +40,8 @@ builder.Services
     .WithTools<CitationTools>()
     .WithTools<FamilyTools>()
     .WithTools<EventTools>()
-    .WithTools<SourceTools>();
+    .WithTools<SourceTools>()
+    .WithTools<TagTools>();
 
 var app = builder.Build();
 var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");

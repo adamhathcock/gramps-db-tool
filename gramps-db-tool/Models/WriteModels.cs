@@ -1,9 +1,10 @@
 namespace GrampsDbTool.Models;
 
-public sealed record UpdateMediaPathRequest(
+public sealed record UpdateMediaRequest(
     string MediaHandle,
-    string NewPath,
-    bool ConvertToRelative
+    string? NewPath,
+    bool ConvertToRelative,
+    IReadOnlyList<string>? TagHandles
 );
 
 public sealed record UpdateNoteRequest(

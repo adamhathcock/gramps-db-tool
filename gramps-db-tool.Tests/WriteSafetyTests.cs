@@ -99,26 +99,27 @@ public sealed class WriteSafetyTests
     }
 
     [Fact]
-    public async Task UpdateMediaPathRejectsWhenWritesAreDisabled()
+    public async Task UpdateMediaRejectsWhenWritesAreDisabled()
     {
         using var database = new TestDatabase();
         var service = CreateMediaWriteService(database, allowWrites: false);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.UpdateMediaPathAsync(new UpdateMediaPathRequest("media1", "photos/new.jpg", ConvertToRelative: false)));
+            service.UpdateMediaAsync(new UpdateMediaRequest("media1", "photos/new.jpg", ConvertToRelative: false, TagHandles: null)));
         Assert.Contains("Writes are disabled", exception.Message);
     }
 
     [Fact]
-    public async Task UpdateMediaPathCreatesBackupAndChangesOnlyMediaPathFields()
+    public async Task UpdateMediaCreatesBackupAndChangesPathWhilePreservingTags()
     {
         using var database = new TestDatabase();
         var service = CreateMediaWriteService(database, allowWrites: true);
 
-        var updated = await service.UpdateMediaPathAsync(new UpdateMediaPathRequest("media1", "photos/new.jpg", ConvertToRelative: false));
+        var updated = await service.UpdateMediaAsync(new UpdateMediaRequest("media1", "photos/new.jpg", ConvertToRelative: false, TagHandles: null));
 
         Assert.Equal("photos/new.jpg", updated.NotNull().Path);
         Assert.Equal(Path.Combine(database.MediaPath, "photos/new.jpg"), updated.ResolvedPath);
+        Assert.Equal(["tag1", "tag2"], updated.TagHandles);
         Assert.NotEmpty(Directory.GetFiles(database.SavePath, "gramps-db-tool-*.sqlite.db"));
 
         using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = database.DatabasePath }.ToString());
@@ -130,18 +131,95 @@ public sealed class WriteSafetyTests
         Assert.Equal("photos/new.jpg", reader.GetString(0));
         Assert.Contains("photos/new.jpg", reader.GetString(1));
         Assert.Contains("Portrait", reader.GetString(1));
+        Assert.Contains("tag1", reader.GetString(1));
+        Assert.Contains("tag2", reader.GetString(1));
     }
 
     [Fact]
-    public async Task UpdateMediaPathCanConvertAbsolutePathInsideMediaRootToRelative()
+    public async Task UpdateMediaCanConvertAbsolutePathInsideMediaRootToRelative()
     {
         using var database = new TestDatabase();
         var service = CreateMediaWriteService(database, allowWrites: true);
         var absolutePath = Path.Combine(database.MediaPath, "photos/relative.jpg");
 
-        var updated = await service.UpdateMediaPathAsync(new UpdateMediaPathRequest("media1", absolutePath, ConvertToRelative: true));
+        var updated = await service.UpdateMediaAsync(new UpdateMediaRequest("media1", absolutePath, ConvertToRelative: true, TagHandles: null));
 
         Assert.Equal(Path.Combine("photos", "relative.jpg"), updated.NotNull().Path);
+    }
+
+    [Fact]
+    public async Task UpdateMediaCanReplaceTagsOnlyWhilePreservingPath()
+    {
+        using var database = new TestDatabase();
+        var service = CreateMediaWriteService(database, allowWrites: true);
+
+        var updated = await service.UpdateMediaAsync(new UpdateMediaRequest("media1", NewPath: null, ConvertToRelative: false, TagHandles: ["tag2"]));
+
+        Assert.Equal("photos/ada.jpg", updated.NotNull().Path);
+        Assert.Equal(["tag2"], updated.TagHandles);
+
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = database.DatabasePath }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT path, json_extract(json_data, '$.tag_list[0]'), json_array_length(json_extract(json_data, '$.tag_list')) FROM media WHERE handle = 'media1'";
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("photos/ada.jpg", reader.GetString(0));
+        Assert.Equal("tag2", reader.GetString(1));
+        Assert.Equal(1, reader.GetInt32(2));
+    }
+
+    [Fact]
+    public async Task UpdateMediaCanChangePathAndReplaceTags()
+    {
+        using var database = new TestDatabase();
+        var service = CreateMediaWriteService(database, allowWrites: true);
+
+        var updated = await service.UpdateMediaAsync(new UpdateMediaRequest("media1", "photos/new.jpg", ConvertToRelative: false, TagHandles: ["tag1"]));
+
+        Assert.Equal("photos/new.jpg", updated.NotNull().Path);
+        Assert.Equal(["tag1"], updated.TagHandles);
+    }
+
+    [Fact]
+    public async Task UpdateMediaCanClearTags()
+    {
+        using var database = new TestDatabase();
+        var service = CreateMediaWriteService(database, allowWrites: true);
+
+        var updated = await service.UpdateMediaAsync(new UpdateMediaRequest("media1", NewPath: null, ConvertToRelative: false, TagHandles: []));
+
+        Assert.Empty(updated.NotNull().TagHandles);
+    }
+
+    [Fact]
+    public async Task UpdateMediaRejectsMissingPathAndTags()
+    {
+        using var database = new TestDatabase();
+        var service = CreateMediaWriteService(database, allowWrites: true);
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.UpdateMediaAsync(new UpdateMediaRequest("media1", NewPath: null, ConvertToRelative: false, TagHandles: null)));
+
+        Assert.Contains("path and/or tag", exception.Message);
+    }
+
+    [Fact]
+    public async Task UpdateMediaRejectsInvalidTagHandles()
+    {
+        using var database = new TestDatabase();
+        var service = CreateMediaWriteService(database, allowWrites: true);
+
+        var blankException = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.UpdateMediaAsync(new UpdateMediaRequest("media1", NewPath: null, ConvertToRelative: false, TagHandles: [""])));
+        var duplicateException = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.UpdateMediaAsync(new UpdateMediaRequest("media1", NewPath: null, ConvertToRelative: false, TagHandles: ["tag1", "tag1"])));
+        var missingException = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateMediaAsync(new UpdateMediaRequest("media1", NewPath: null, ConvertToRelative: false, TagHandles: ["missing"])));
+
+        Assert.Contains("must not be empty", blankException.Message);
+        Assert.Contains("Duplicate", duplicateException.Message);
+        Assert.Contains("Unknown tag", missingException.Message);
     }
 
     private static MediaWriteService CreateMediaWriteService(TestDatabase database, bool allowWrites)
