@@ -8,10 +8,11 @@ namespace GrampsDbTool.Data;
 
 public sealed class GrampsRepository(GrampsConfig config, IMediaPathService mediaPathService)
 {
-    public async Task<IReadOnlyList<PersonSearchResultDto>> SearchPeopleAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<PersonSearchResultDto>> SearchPeopleAsync(string query, int limit = 20, int offset = 0, CancellationToken cancellationToken = default)
     {
-        query = query.Trim();
+        query = (query ?? string.Empty).Trim();
         limit = Math.Clamp(limit, 1, 100);
+        offset = Math.Max(offset, 0);
 
         await using var connection = new SqliteConnection(CreateConnectionString());
         await connection.OpenAsync(cancellationToken);
@@ -26,10 +27,12 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
                OR gramps_id LIKE $like
             ORDER BY surname, given_name, gramps_id
             LIMIT $limit
+            OFFSET $offset
             """;
         command.Parameters.AddWithValue("$query", query);
         command.Parameters.AddWithValue("$like", $"%{query}%");
         command.Parameters.AddWithValue("$limit", limit);
+        command.Parameters.AddWithValue("$offset", offset);
 
         var people = new List<PersonSearchResultDto>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -65,8 +68,63 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.RefArray(root, "event_ref_list"),
             JsonMapping.StringArray(root, "family_list"),
             JsonMapping.StringArray(root, "parent_family_list"),
+            JsonMapping.RefArray(root, "media_list"),
             JsonMapping.StringArray(root, "note_list"),
             JsonMapping.StringArray(root, "citation_list"));
+    }
+
+    public async Task<IReadOnlyList<MediaDto>> GetMediaAsync(IReadOnlyList<string>? handles, CancellationToken cancellationToken = default)
+    {
+        if (handles is null)
+        {
+            throw new ArgumentException("At least one media handle is required.", nameof(handles));
+        }
+
+        if (handles.Count == 0)
+        {
+            throw new ArgumentException("At least one media handle is required.", nameof(handles));
+        }
+
+        if (handles.Count > 100)
+        {
+            throw new ArgumentException("At most 100 media handles may be requested.", nameof(handles));
+        }
+
+        var requestedHandles = handles.Where(static handle => !string.IsNullOrWhiteSpace(handle)).ToArray();
+        if (requestedHandles.Length != handles.Count)
+        {
+            throw new ArgumentException("Media handles must not be empty.", nameof(handles));
+        }
+
+        await using var connection = new SqliteConnection(CreateConnectionString());
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        var parameters = requestedHandles.Distinct().Select((handle, index) => new { Handle = handle, Parameter = $"$handle{index}" }).ToArray();
+        command.CommandText = $"SELECT json_data FROM media WHERE handle IN ({string.Join(", ", parameters.Select(static parameter => parameter.Parameter))})";
+        foreach (var parameter in parameters)
+        {
+            command.Parameters.AddWithValue(parameter.Parameter, parameter.Handle);
+        }
+
+        var mediaByHandle = new Dictionary<string, MediaDto>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var media = MapMedia(reader.GetString(0));
+            mediaByHandle[media.Handle] = media;
+        }
+
+        var mediaList = new List<MediaDto>();
+        foreach (var handle in requestedHandles)
+        {
+            if (mediaByHandle.TryGetValue(handle, out var media))
+            {
+                mediaList.Add(media);
+            }
+        }
+
+        return mediaList;
     }
 
     public async Task<MediaDto?> GetMediaAsync(string? handle, string? grampsId, CancellationToken cancellationToken = default)
@@ -77,6 +135,11 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             return null;
         }
 
+        return MapMedia(media);
+    }
+
+    private MediaDto MapMedia(string media)
+    {
         using var document = JsonDocument.Parse(media);
         var root = document.RootElement;
         var path = JsonMapping.String(root, "path");

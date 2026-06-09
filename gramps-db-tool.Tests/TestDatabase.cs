@@ -64,8 +64,11 @@ internal sealed class TestDatabase : IDisposable
         }
 
         InsertObject(connection, "person", "person1", "I0001", $$"""
-            {"_class":"Person","handle":"person1","gramps_id":"I0001","gender":1,"primary_name":{"first_name":"Ada","surname_list":[{"surname":"Lovelace"}]},"event_ref_list":[{"ref":"event1"}],"family_list":["family1"],"parent_family_list":[],"note_list":["note1"],"citation_list":["citation1"]}
+            {"_class":"Person","handle":"person1","gramps_id":"I0001","gender":1,"primary_name":{"first_name":"Ada","surname_list":[{"surname":"Lovelace"}]},"event_ref_list":[{"ref":"event1"}],"family_list":["family1"],"parent_family_list":[],"media_list":[{"ref":"media1"}],"note_list":["note1"],"citation_list":["citation1"]}
             """, "given_name", "Ada", "surname", "Lovelace");
+        InsertObject(connection, "person", "person2", "I0002", $$"""
+            {"_class":"Person","handle":"person2","gramps_id":"I0002","gender":1,"primary_name":{"first_name":"Charles","surname_list":[{"surname":"Babbage"}]},"event_ref_list":[],"family_list":["family1"],"parent_family_list":[],"media_list":[],"note_list":[],"citation_list":[]}
+            """, "given_name", "Charles", "surname", "Babbage");
         InsertObject(connection, "family", "family1", "F0001", """
             {"_class":"Family","handle":"family1","gramps_id":"F0001","father_handle":"person2","mother_handle":"person1","child_ref_list":[{"ref":"person3"}],"type":{"value":0,"string":"Married"},"event_ref_list":[{"ref":"event1"}],"note_list":["note1"],"citation_list":["citation1"]}
             """);
@@ -78,6 +81,9 @@ internal sealed class TestDatabase : IDisposable
         InsertObject(connection, "media", "media1", "O0001", """
             {"_class":"Media","handle":"media1","gramps_id":"O0001","path":"photos/ada.jpg","mime":"image/jpeg","desc":"Portrait","checksum":"abc","note_list":["note1"],"citation_list":["citation1"]}
             """, "path", "photos/ada.jpg");
+        InsertObject(connection, "media", "media2", "O0002", """
+            {"_class":"Media","handle":"media2","gramps_id":"O0002","path":"photos/charles.jpg","mime":"image/jpeg","desc":"Portrait","checksum":"def","note_list":[],"citation_list":[]}
+            """, "path", "photos/charles.jpg");
         InsertObject(connection, "note", "note1", "N0001", """
             {"_class":"Note","handle":"note1","gramps_id":"N0001","text":{"string":"A note"},"format":0,"type":{"value":0,"string":"General"}}
             """, "format", 0);

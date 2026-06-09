@@ -15,6 +15,7 @@ public sealed record PersonDto(
     IReadOnlyList<string> EventHandles,
     IReadOnlyList<string> FamilyHandles,
     IReadOnlyList<string> ParentFamilyHandles,
+    IReadOnlyList<string> MediaHandles,
     IReadOnlyList<string> NoteHandles,
     IReadOnlyList<string> CitationHandles
 );

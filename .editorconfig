@@ -4,3 +4,6 @@ dotnet_diagnostic.CS8619.severity = error
 
 # CS8602: Dereference of a possibly null reference.
 dotnet_diagnostic.CS8602.severity = error
+
+# CS8603: Possible null reference return.
+dotnet_diagnostic.CS8603.severity = error
