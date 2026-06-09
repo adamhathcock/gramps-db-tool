@@ -12,7 +12,7 @@ public sealed class BackupService(GrampsConfig config, GrampsDatabasePaths datab
         }
 
         var backupDirectory = config.BackupPath ?? databasePaths.SavePath;
-        Directory.CreateDirectory(backupDirectory);
+        Directory.CreateDirectory(backupDirectory.NotNull());
         var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
         var backupPath = Path.Combine(backupDirectory, $"gramps-db-tool-{timestamp}.sqlite.db");
 

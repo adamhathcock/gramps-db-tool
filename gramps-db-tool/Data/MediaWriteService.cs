@@ -15,7 +15,7 @@ public sealed class MediaWriteService(
     GrampsRepository repository,
     IMediaPathService mediaPathService)
 {
-    public async Task<MediaDto> UpdateMediaPathAsync(UpdateMediaPathRequest request, CancellationToken cancellationToken = default)
+    public async Task<MediaDto?> UpdateMediaPathAsync(UpdateMediaPathRequest request, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.MediaHandle))
         {
@@ -63,7 +63,7 @@ public sealed class MediaWriteService(
         await transaction.CommitAsync(cancellationToken);
 
         var updated = await repository.GetMediaAsync(request.MediaHandle, null, cancellationToken);
-        return updated ?? throw new InvalidOperationException("Updated media object could not be reloaded.");
+        return updated;
     }
 
     private string NormalizeStoredPath(UpdateMediaPathRequest request)

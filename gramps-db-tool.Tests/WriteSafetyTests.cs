@@ -67,7 +67,7 @@ public sealed class WriteSafetyTests
 
         var updated = await service.UpdateMediaPathAsync(new UpdateMediaPathRequest("media1", "photos/new.jpg", ConvertToRelative: false));
 
-        Assert.Equal("photos/new.jpg", updated.Path);
+        Assert.Equal("photos/new.jpg", updated.NotNull().Path);
         Assert.Equal(Path.Combine(database.MediaPath, "photos/new.jpg"), updated.ResolvedPath);
         Assert.NotEmpty(Directory.GetFiles(database.SavePath, "gramps-db-tool-*.sqlite.db"));
 
@@ -91,7 +91,7 @@ public sealed class WriteSafetyTests
 
         var updated = await service.UpdateMediaPathAsync(new UpdateMediaPathRequest("media1", absolutePath, ConvertToRelative: true));
 
-        Assert.Equal(Path.Combine("photos", "relative.jpg"), updated.Path);
+        Assert.Equal(Path.Combine("photos", "relative.jpg"), updated.NotNull().Path);
     }
 
     private static MediaWriteService CreateMediaWriteService(TestDatabase database, bool allowWrites)
