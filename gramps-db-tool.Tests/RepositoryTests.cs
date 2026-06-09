@@ -10,27 +10,17 @@ public sealed class RepositoryTests
     public async Task MetadataReaderRequiresMediaPath()
     {
         using var database = new TestDatabase(includeMediaPath: false);
-        var reader = new GrampsMetadataReader(new GrampsConfig(database.DirectoryPath, database.DatabasePath));
+        var reader = new GrampsMetadataReader(new GrampsConfig(database.DirectoryPath, database.DatabasePath,null));
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => reader.ReadDatabasePathsAsync());
         Assert.Contains("media-path", exception.Message);
     }
 
     [Fact]
-    public async Task MetadataReaderRequiresSavePath()
-    {
-        using var database = new TestDatabase(includeSavePath: false);
-        var reader = new GrampsMetadataReader(new GrampsConfig(database.DirectoryPath, database.DatabasePath));
-
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => reader.ReadDatabasePathsAsync());
-        Assert.Contains("save-path", exception.Message);
-    }
-
-    [Fact]
     public async Task RepositoryMapsReadOnlyObjects()
     {
         using var database = new TestDatabase();
-        var config = new GrampsConfig(database.DirectoryPath, database.DatabasePath);
+        var config = new GrampsConfig(database.DirectoryPath, database.DatabasePath,null);
         var paths = await new GrampsMetadataReader(config).ReadDatabasePathsAsync();
         var repository = new GrampsRepository(config, new MediaPathService(paths));
 

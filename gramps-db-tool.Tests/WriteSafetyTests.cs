@@ -23,7 +23,7 @@ public sealed class WriteSafetyTests
     {
         using var database = new TestDatabase();
         var service = new BackupService(
-            new GrampsConfig(database.DirectoryPath, database.DatabasePath),
+            new GrampsConfig(database.DirectoryPath, database.DatabasePath,null),
             new GrampsDatabasePaths(database.MediaPath, database.SavePath));
 
         var backupPath = await service.CreateBackupAsync();
@@ -96,7 +96,7 @@ public sealed class WriteSafetyTests
 
     private static MediaWriteService CreateMediaWriteService(TestDatabase database, bool allowWrites)
     {
-        var config = new GrampsConfig(database.DirectoryPath, database.DatabasePath);
+        var config = new GrampsConfig(database.DirectoryPath, database.DatabasePath,null);
         var paths = new GrampsDatabasePaths(database.MediaPath, database.SavePath);
         var mediaPathService = new MediaPathService(paths);
         var repository = new GrampsRepository(config, mediaPathService);

@@ -11,6 +11,10 @@ using Microsoft.Extensions.Logging;
 var runtimeOptions = ConfigLoader.LoadRuntimeOptions(args);
 var grampsConfig = ConfigLoader.LoadConfig(runtimeOptions.ConfigPath);
 var databasePaths = await new GrampsMetadataReader(grampsConfig).ReadDatabasePathsAsync();
+if (string.IsNullOrEmpty(databasePaths.SavePath))
+{
+    databasePaths =  databasePaths with { SavePath = grampsConfig.BackupPath };
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -43,6 +47,7 @@ var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Sta
 logger.LogInformation("Using Gramps DB Tool config: {ConfigPath}", runtimeOptions.ConfigPath);
 logger.LogInformation("Using Gramps SQLite database: {DatabasePath}", grampsConfig.DatabasePath);
 logger.LogInformation("Using Gramps media base path: {MediaBasePath}", databasePaths.MediaBasePath);
+logger.LogInformation("Using Gramps backup path: {BackupPath}", databasePaths.SavePath);
 logger.LogInformation("Write tools are {WriteMode}", runtimeOptions.AllowWrites ? "enabled" : "disabled");
 
 app.MapGet("/health", () => Results.Ok(new

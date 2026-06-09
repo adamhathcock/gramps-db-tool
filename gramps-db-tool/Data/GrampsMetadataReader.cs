@@ -9,7 +9,7 @@ public sealed class GrampsMetadataReader(GrampsConfig config)
     public async Task<GrampsDatabasePaths> ReadDatabasePathsAsync(CancellationToken cancellationToken = default)
     {
         var mediaBasePath = await ReadRequiredStringMetadataAsync("media-path", cancellationToken);
-        var savePath = await ReadRequiredStringMetadataAsync("save-path", cancellationToken);
+        var savePath = await ReadOptionalStringMetadataAsync("save-path", cancellationToken);
         return new GrampsDatabasePaths(mediaBasePath, savePath);
     }
 

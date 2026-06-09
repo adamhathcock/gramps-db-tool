@@ -3,12 +3,12 @@ namespace GrampsDbTool.Configuration;
 public sealed record GrampsConfig(
     string ConfigDirectory,
     string DatabasePath,
-    string? BackupPath = null
+    string? BackupPath
 );
 
 public sealed record GrampsDatabasePaths(
     string MediaBasePath,
-    string SavePath
+    string? SavePath
 );
 
 public sealed record RuntimeOptions(
