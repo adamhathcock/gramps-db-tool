@@ -4,6 +4,7 @@ using GrampsDbTool.Models;
 using GrampsDbTool.Safety;
 using GrampsDbTool.Services;
 using Microsoft.Data.Sqlite;
+using System.IO.Compression;
 
 namespace GrampsDbTool.Tests;
 
@@ -46,6 +47,55 @@ public sealed class WriteSafetyTests
         Assert.True(File.Exists(backupPath));
         Assert.Equal(configuredBackupPath, Path.GetDirectoryName(backupPath));
         Assert.Empty(Directory.GetFiles(database.SavePath, "gramps-db-tool-*.sqlite.db"));
+    }
+
+    [Fact]
+    public async Task BackupServiceCreatesArchiveWithDatabaseAndMediaInDatabaseDerivedSavePath()
+    {
+        using var database = new TestDatabase();
+        var nestedMediaDirectory = Path.Combine(database.MediaPath, "photos", "nested");
+        Directory.CreateDirectory(nestedMediaDirectory);
+        await File.WriteAllTextAsync(Path.Combine(database.MediaPath, "root.txt"), "root media");
+        await File.WriteAllTextAsync(Path.Combine(nestedMediaDirectory, "portrait.jpg"), "nested media");
+        var service = new BackupService(
+            new GrampsConfig(database.DirectoryPath, database.DatabasePath, BackupPath: null),
+            new GrampsDatabasePaths(database.MediaPath, database.SavePath));
+
+        var archive = await service.CreateArchiveAsync();
+
+        Assert.True(File.Exists(archive.BackupPath));
+        Assert.Equal(database.SavePath, Path.GetDirectoryName(archive.BackupPath));
+        Assert.Equal(Path.GetFullPath(database.MediaPath), archive.MediaRoot);
+        Assert.Equal(2, archive.MediaFileCount);
+
+        using var zip = ZipFile.OpenRead(archive.BackupPath);
+        Assert.Contains(zip.Entries, entry => entry.FullName == Path.GetFileName(database.DatabasePath));
+        Assert.Contains(zip.Entries, entry => entry.FullName == "media/root.txt");
+        Assert.Contains(zip.Entries, entry => entry.FullName == "media/photos/nested/portrait.jpg");
+    }
+
+    [Fact]
+    public async Task BackupServiceArchiveRequiresDatabaseDerivedSavePath()
+    {
+        using var database = new TestDatabase(includeSavePath: false);
+        var service = new BackupService(
+            new GrampsConfig(database.DirectoryPath, database.DatabasePath, Path.Combine(database.DirectoryPath, "configured-backups")),
+            new GrampsDatabasePaths(database.MediaPath, SavePath: null));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.CreateArchiveAsync());
+        Assert.Contains("save-path", exception.Message);
+    }
+
+    [Fact]
+    public async Task BackupServiceArchiveRequiresDatabaseDerivedMediaPath()
+    {
+        using var database = new TestDatabase(includeMediaPath: false);
+        var service = new BackupService(
+            new GrampsConfig(database.DirectoryPath, database.DatabasePath, BackupPath: null),
+            new GrampsDatabasePaths(string.Empty, database.SavePath));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.CreateArchiveAsync());
+        Assert.Contains("media-path", exception.Message);
     }
 
     [Fact]

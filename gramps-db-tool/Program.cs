@@ -34,6 +34,7 @@ builder.Services
     .WithHttpTransport()
     .AddAuthorizationFilters()
     .WithTools<PersonTools>()
+    .WithTools<BackupTools>()
     .WithTools<MediaTools>()
     .WithTools<NoteTools>()
     .WithTools<CitationTools>()
