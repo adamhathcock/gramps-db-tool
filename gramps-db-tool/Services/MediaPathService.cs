@@ -65,17 +65,6 @@ public sealed class MediaPathService(GrampsDatabasePaths databasePaths) : IMedia
         {
             return;
         }
-
-        if (Path.IsPathRooted(path))
-        {
-            throw new ArgumentException("Absolute media paths are disabled.", nameof(path));
-        }
-
-        var resolvedPath = Path.GetFullPath(path, mediaRoot);
-        if (!IsInsideMediaRoot(resolvedPath))
-        {
-            throw new ArgumentException("Media path must stay inside the Gramps media root.", nameof(path));
-        }
     }
 
     private static string NormalizeDirectory(string path)

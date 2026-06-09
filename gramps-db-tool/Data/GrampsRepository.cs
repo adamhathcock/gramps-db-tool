@@ -73,52 +73,58 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.StringArray(root, "citation_list"));
     }
 
-    public async Task<IReadOnlyList<MediaDto>> GetMediaAsync(IReadOnlyList<string>? handles, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<MediaDto>> GetMediaAsync(IReadOnlyList<string>? handles, IReadOnlyList<string>? grampsIds = null, CancellationToken cancellationToken = default)
     {
-        if (handles is null)
+        var hasHandles = handles is not null;
+        var hasGrampsIds = grampsIds is not null;
+        if (hasHandles == hasGrampsIds)
         {
-            throw new ArgumentException("At least one media handle is required.", nameof(handles));
+            throw new ArgumentException("Supply either media handles or Gramps IDs, but not both.");
         }
 
-        if (handles.Count == 0)
+        var lookupValues = hasHandles ? handles! : grampsIds!;
+        var lookupName = hasHandles ? "handles" : "grampsIds";
+        var columnName = hasHandles ? "handle" : "gramps_id";
+
+        if (lookupValues.Count == 0)
         {
-            throw new ArgumentException("At least one media handle is required.", nameof(handles));
+            throw new ArgumentException($"At least one media {lookupName} value is required.");
         }
 
-        if (handles.Count > 100)
+        if (lookupValues.Count > 100)
         {
-            throw new ArgumentException("At most 100 media handles may be requested.", nameof(handles));
+            throw new ArgumentException($"At most 100 media {lookupName} values may be requested.");
         }
 
-        var requestedHandles = handles.Where(static handle => !string.IsNullOrWhiteSpace(handle)).ToArray();
-        if (requestedHandles.Length != handles.Count)
+        var requestedValues = lookupValues.Where(static value => !string.IsNullOrWhiteSpace(value)).ToArray();
+        if (requestedValues.Length != lookupValues.Count)
         {
-            throw new ArgumentException("Media handles must not be empty.", nameof(handles));
+            throw new ArgumentException($"Media {lookupName} values must not be empty.");
         }
 
         await using var connection = new SqliteConnection(CreateConnectionString());
         await connection.OpenAsync(cancellationToken);
 
         await using var command = connection.CreateCommand();
-        var parameters = requestedHandles.Distinct().Select((handle, index) => new { Handle = handle, Parameter = $"$handle{index}" }).ToArray();
-        command.CommandText = $"SELECT json_data FROM media WHERE handle IN ({string.Join(", ", parameters.Select(static parameter => parameter.Parameter))})";
+        var parameters = requestedValues.Distinct().Select((value, index) => new { Value = value, Parameter = $"$value{index}" }).ToArray();
+        command.CommandText = $"SELECT json_data, {columnName} FROM media WHERE {columnName} IN ({string.Join(", ", parameters.Select(static parameter => parameter.Parameter))})";
         foreach (var parameter in parameters)
         {
-            command.Parameters.AddWithValue(parameter.Parameter, parameter.Handle);
+            command.Parameters.AddWithValue(parameter.Parameter, parameter.Value);
         }
 
-        var mediaByHandle = new Dictionary<string, MediaDto>();
+        var mediaByLookupValue = new Dictionary<string, MediaDto>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
             var media = MapMedia(reader.GetString(0));
-            mediaByHandle[media.Handle] = media;
+            mediaByLookupValue[reader.GetString(1)] = media;
         }
 
         var mediaList = new List<MediaDto>();
-        foreach (var handle in requestedHandles)
+        foreach (var value in requestedValues)
         {
-            if (mediaByHandle.TryGetValue(handle, out var media))
+            if (mediaByLookupValue.TryGetValue(value, out var media))
             {
                 mediaList.Add(media);
             }

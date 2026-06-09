@@ -10,12 +10,13 @@ namespace GrampsDbTool.Tools;
 public sealed class MediaTools(GrampsRepository repository, MediaWriteService mediaWriteService)
 {
     [McpServerTool(Name = "get_media", ReadOnly = true, Destructive = false, Idempotent = true)]
-    [Description("Get up to 100 Gramps media objects by handle, including resolved media file paths. Existing results are returned in requested order.")]
+    [Description("Get up to 100 Gramps media objects by handle or Gramps ID, including resolved media file paths. Supply handles or grampsIds, not both. Existing results are returned in requested order.")]
     public Task<IReadOnlyList<MediaDto>> GetMedia(
-        [Description("Gramps media handles to fetch. At least 1 and at most 100 handles are allowed.")] IReadOnlyList<string>? handles,
+        [Description("Gramps media handles to fetch. Required if grampsIds is not supplied. At least 1 and at most 100 handles are allowed.")] IReadOnlyList<string>? handles = null,
+        [Description("User-visible Gramps media IDs to fetch. Required if handles is not supplied. At least 1 and at most 100 IDs are allowed.")] IReadOnlyList<string>? grampsIds = null,
         CancellationToken cancellationToken = default)
     {
-        return repository.GetMediaAsync(handles, cancellationToken);
+        return repository.GetMediaAsync(handles, grampsIds, cancellationToken);
     }
 
     [McpServerTool(Name = "update_media_path", ReadOnly = false, Destructive = false, Idempotent = false)]
