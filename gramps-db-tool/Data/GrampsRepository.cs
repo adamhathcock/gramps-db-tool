@@ -8,7 +8,8 @@ namespace GrampsDbTool.Data;
 
 public sealed class GrampsRepository(GrampsConfig config, IMediaPathService mediaPathService)
 {
-    public async Task<IReadOnlyList<PersonSearchResultDto>> SearchPeopleAsync(string query, int limit = 20, int offset = 0, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<PersonSearchResultDto>> SearchPeopleAsync(string query, int limit = 20,
+        int offset = 0, CancellationToken cancellationToken = default)
     {
         query = (query ?? string.Empty).Trim();
         limit = Math.Clamp(limit, 1, 100);
@@ -19,16 +20,16 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT json_data
-            FROM person
-            WHERE $query = ''
-               OR given_name LIKE $like
-               OR surname LIKE $like
-               OR gramps_id LIKE $like
-            ORDER BY surname, given_name, gramps_id
-            LIMIT $limit
-            OFFSET $offset
-            """;
+                              SELECT json_data
+                              FROM person
+                              WHERE $query = ''
+                                 OR given_name LIKE $like
+                                 OR surname LIKE $like
+                                 OR gramps_id LIKE $like
+                              ORDER BY surname, given_name, gramps_id
+                              LIMIT $limit
+                              OFFSET $offset
+                              """;
         command.Parameters.AddWithValue("$query", query);
         command.Parameters.AddWithValue("$like", $"%{query}%");
         command.Parameters.AddWithValue("$limit", limit);
@@ -50,7 +51,8 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
         return people;
     }
 
-    public async Task<PersonDto?> GetPersonAsync(string? handle, string? grampsId, CancellationToken cancellationToken = default)
+    public async Task<PersonDto?> GetPersonAsync(string? handle, string? grampsId,
+        CancellationToken cancellationToken = default)
     {
         var person = await GetObjectAsync("person", handle, grampsId, cancellationToken);
         if (person is null)
@@ -68,73 +70,20 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.RefArray(root, "event_ref_list"),
             JsonMapping.StringArray(root, "family_list"),
             JsonMapping.StringArray(root, "parent_family_list"),
-                JsonMapping.RefArray(root, "media_list"),
-                JsonMapping.StringArray(root, "note_list"),
-                JsonMapping.StringArray(root, "citation_list"),
-                JsonMapping.StringArray(root, "tag_list"));
+            JsonMapping.RefArray(root, "media_list"),
+            JsonMapping.StringArray(root, "note_list"),
+            JsonMapping.StringArray(root, "citation_list"),
+            JsonMapping.StringArray(root, "tag_list"));
     }
 
-    public async Task<IReadOnlyList<MediaDto>> GetMediaAsync(IReadOnlyList<string>? handles, IReadOnlyList<string>? grampsIds = null, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<MediaDto>> GetMediaAsync(IReadOnlyList<string>? handles,
+        IReadOnlyList<string>? grampsIds = null, CancellationToken cancellationToken = default)
     {
-        var hasHandles = handles is not null;
-        var hasGrampsIds = grampsIds is not null;
-        if (hasHandles == hasGrampsIds)
-        {
-            throw new ArgumentException("Supply either media handles or Gramps IDs, but not both.");
-        }
-
-        var lookupValues = hasHandles ? handles! : grampsIds!;
-        var lookupName = hasHandles ? "handles" : "grampsIds";
-        var columnName = hasHandles ? "handle" : "gramps_id";
-
-        if (lookupValues.Count == 0)
-        {
-            throw new ArgumentException($"At least one media {lookupName} value is required.");
-        }
-
-        if (lookupValues.Count > 100)
-        {
-            throw new ArgumentException($"At most 100 media {lookupName} values may be requested.");
-        }
-
-        var requestedValues = lookupValues.Where(static value => !string.IsNullOrWhiteSpace(value)).ToArray();
-        if (requestedValues.Length != lookupValues.Count)
-        {
-            throw new ArgumentException($"Media {lookupName} values must not be empty.");
-        }
-
-        await using var connection = new SqliteConnection(CreateConnectionString());
-        await connection.OpenAsync(cancellationToken);
-
-        await using var command = connection.CreateCommand();
-        var parameters = requestedValues.Distinct().Select((value, index) => new { Value = value, Parameter = $"$value{index}" }).ToArray();
-        command.CommandText = $"SELECT json_data, {columnName} FROM media WHERE {columnName} IN ({string.Join(", ", parameters.Select(static parameter => parameter.Parameter))})";
-        foreach (var parameter in parameters)
-        {
-            command.Parameters.AddWithValue(parameter.Parameter, parameter.Value);
-        }
-
-        var mediaByLookupValue = new Dictionary<string, MediaDto>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            var media = MapMedia(reader.GetString(0));
-            mediaByLookupValue[reader.GetString(1)] = media;
-        }
-
-        var mediaList = new List<MediaDto>();
-        foreach (var value in requestedValues)
-        {
-            if (mediaByLookupValue.TryGetValue(value, out var media))
-            {
-                mediaList.Add(media);
-            }
-        }
-
-        return mediaList;
+        return await GetObjectsAsync("media", "media", handles, grampsIds, MapMedia, cancellationToken);
     }
 
-    public async Task<MediaDto?> GetMediaAsync(string? handle, string? grampsId, CancellationToken cancellationToken = default)
+    public async Task<MediaDto?> GetMediaAsync(string? handle, string? grampsId,
+        CancellationToken cancellationToken = default)
     {
         var media = await GetObjectAsync("media", handle, grampsId, cancellationToken);
         if (media is null)
@@ -164,47 +113,34 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.StringArray(root, "tag_list"));
     }
 
-    public async Task<NoteDto?> GetNoteAsync(string? handle, string? grampsId, CancellationToken cancellationToken = default)
+    public async Task<NoteDto?> GetNoteAsync(string? handle, string? grampsId,
+        CancellationToken cancellationToken = default)
     {
-        var note = await GetObjectAsync("note", handle, grampsId, cancellationToken);
-        if (note is null)
-        {
-            return null;
-        }
-
-        using var document = JsonDocument.Parse(note);
-        var root = document.RootElement;
-        return new NoteDto(
-            RequiredString(root, "handle"),
-            JsonMapping.String(root, "gramps_id"),
-            JsonMapping.NoteText(root),
-            JsonMapping.Int(root, "format"),
-            JsonMapping.GrampsTypeName(root, "type"),
-            JsonMapping.StringArray(root, "tag_list"));
+        var notes = await GetNoteAsync(ToLookupList(handle), ToLookupList(grampsId), cancellationToken);
+        return notes.FirstOrDefault();
     }
 
-    public async Task<CitationDto?> GetCitationAsync(string? handle, string? grampsId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<NoteDto>> GetNoteAsync(IReadOnlyList<string>? handles,
+        IReadOnlyList<string>? grampsIds = null, CancellationToken cancellationToken = default)
     {
-        var citation = await GetObjectAsync("citation", handle, grampsId, cancellationToken);
-        if (citation is null)
-        {
-            return null;
-        }
-
-        using var document = JsonDocument.Parse(citation);
-        var root = document.RootElement;
-        return new CitationDto(
-            RequiredString(root, "handle"),
-            JsonMapping.String(root, "gramps_id"),
-            JsonMapping.String(root, "page"),
-            JsonMapping.Int(root, "confidence"),
-            JsonMapping.String(root, "source_handle"),
-            JsonMapping.StringArray(root, "note_list"),
-            JsonMapping.RefArray(root, "media_list"),
-            JsonMapping.StringArray(root, "tag_list"));
+        return await GetObjectsAsync("note", "note", handles, grampsIds, MapNote, cancellationToken);
     }
 
-    public async Task<FamilyDto?> GetFamilyAsync(string? handle, string? grampsId, CancellationToken cancellationToken = default)
+    public async Task<CitationDto?> GetCitationAsync(string? handle, string? grampsId,
+        CancellationToken cancellationToken = default)
+    {
+        var citations = await GetCitationAsync(ToLookupList(handle), ToLookupList(grampsId), cancellationToken);
+        return citations.FirstOrDefault();
+    }
+
+    public async Task<IReadOnlyList<CitationDto>> GetCitationAsync(IReadOnlyList<string>? handles,
+        IReadOnlyList<string>? grampsIds = null, CancellationToken cancellationToken = default)
+    {
+        return await GetObjectsAsync("citation", "citation", handles, grampsIds, MapCitation, cancellationToken);
+    }
+
+    public async Task<FamilyDto?> GetFamilyAsync(string? handle, string? grampsId,
+        CancellationToken cancellationToken = default)
     {
         var family = await GetObjectAsync("family", handle, grampsId, cancellationToken);
         if (family is null)
@@ -227,48 +163,30 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.StringArray(root, "tag_list"));
     }
 
-    public async Task<EventDto?> GetEventAsync(string? handle, string? grampsId, CancellationToken cancellationToken = default)
+    public async Task<EventDto?> GetEventAsync(string? handle, string? grampsId,
+        CancellationToken cancellationToken = default)
     {
-        var @event = await GetObjectAsync("event", handle, grampsId, cancellationToken);
-        if (@event is null)
-        {
-            return null;
-        }
-
-        using var document = JsonDocument.Parse(@event);
-        var root = document.RootElement;
-        return new EventDto(
-            RequiredString(root, "handle"),
-            JsonMapping.String(root, "gramps_id"),
-            JsonMapping.GrampsTypeName(root, "type"),
-            JsonMapping.String(root, "description"),
-            JsonMapping.String(root, "place"),
-            JsonMapping.StringArray(root, "note_list"),
-            JsonMapping.StringArray(root, "citation_list"),
-            JsonMapping.RefArray(root, "media_list"),
-            JsonMapping.StringArray(root, "tag_list"));
+        var events = await GetEventAsync(ToLookupList(handle), ToLookupList(grampsId), cancellationToken);
+        return events.FirstOrDefault();
     }
 
-    public async Task<SourceDto?> GetSourceAsync(string? handle, string? grampsId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<EventDto>> GetEventAsync(IReadOnlyList<string>? handles,
+        IReadOnlyList<string>? grampsIds = null, CancellationToken cancellationToken = default)
     {
-        var source = await GetObjectAsync("source", handle, grampsId, cancellationToken);
-        if (source is null)
-        {
-            return null;
-        }
+        return await GetObjectsAsync("event", "event", handles, grampsIds, MapEvent, cancellationToken);
+    }
 
-        using var document = JsonDocument.Parse(source);
-        var root = document.RootElement;
-        return new SourceDto(
-            RequiredString(root, "handle"),
-            JsonMapping.String(root, "gramps_id"),
-            JsonMapping.String(root, "title"),
-            JsonMapping.String(root, "author"),
-            JsonMapping.String(root, "pubinfo"),
-            JsonMapping.String(root, "abbrev"),
-            JsonMapping.StringArray(root, "note_list"),
-            JsonMapping.RefArray(root, "media_list"),
-            JsonMapping.StringArray(root, "tag_list"));
+    public async Task<SourceDto?> GetSourceAsync(string? handle, string? grampsId,
+        CancellationToken cancellationToken = default)
+    {
+        var sources = await GetSourceAsync(ToLookupList(handle), ToLookupList(grampsId), cancellationToken);
+        return sources.FirstOrDefault();
+    }
+
+    public async Task<IReadOnlyList<SourceDto>> GetSourceAsync(IReadOnlyList<string>? handles,
+        IReadOnlyList<string>? grampsIds = null, CancellationToken cancellationToken = default)
+    {
+        return await GetObjectsAsync("source", "source", handles, grampsIds, MapSource, cancellationToken);
     }
 
     public async Task<IReadOnlyList<TagDto>> ListTagsAsync(CancellationToken cancellationToken = default)
@@ -289,7 +207,8 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
         return tags;
     }
 
-    public async Task<IReadOnlyList<TagDto>> GetTagsAsync(IReadOnlyList<string>? handles, IReadOnlyList<string>? names = null, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<TagDto>> GetTagsAsync(IReadOnlyList<string>? handles,
+        IReadOnlyList<string>? names = null, CancellationToken cancellationToken = default)
     {
         var hasHandles = handles is not null;
         var hasNames = names is not null;
@@ -322,8 +241,10 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
         await connection.OpenAsync(cancellationToken);
 
         await using var command = connection.CreateCommand();
-        var parameters = requestedValues.Distinct().Select((value, index) => new { Value = value, Parameter = $"$value{index}" }).ToArray();
-        command.CommandText = $"SELECT json_data, {columnName} FROM tag WHERE {columnName} IN ({string.Join(", ", parameters.Select(static parameter => parameter.Parameter))})";
+        var parameters = requestedValues.Distinct()
+            .Select((value, index) => new { Value = value, Parameter = $"$value{index}" }).ToArray();
+        command.CommandText =
+            $"SELECT json_data, {columnName} FROM tag WHERE {columnName} IN ({string.Join(", ", parameters.Select(static parameter => parameter.Parameter))})";
         foreach (var parameter in parameters)
         {
             command.Parameters.AddWithValue(parameter.Parameter, parameter.Value);
@@ -378,13 +299,15 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
         var tables = TaggedObjectTables;
         if (objectTypes is not null)
         {
-            var requestedTypes = objectTypes.Where(static value => !string.IsNullOrWhiteSpace(value)).Select(static value => value.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var requestedTypes = objectTypes.Where(static value => !string.IsNullOrWhiteSpace(value))
+                .Select(static value => value.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (requestedTypes.Count != objectTypes.Count)
             {
                 throw new ArgumentException("Object types must not be empty.");
             }
 
-            var unknownTypes = requestedTypes.Except(TaggedObjectTables.Select(static table => table.ObjectType), StringComparer.OrdinalIgnoreCase).ToArray();
+            var unknownTypes = requestedTypes.Except(TaggedObjectTables.Select(static table => table.ObjectType),
+                StringComparer.OrdinalIgnoreCase).ToArray();
             if (unknownTypes.Length > 0)
             {
                 throw new ArgumentException($"Unsupported tagged object type: {string.Join(", ", unknownTypes)}.");
@@ -399,22 +322,22 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
         }
 
         var unionSql = string.Join(" UNION ALL ", tables.Select(static table => $"""
-            SELECT '{table.ObjectType}' AS object_type,
-                   handle,
-                   {table.GrampsIdExpression} AS gramps_id,
-                   {table.LabelExpression} AS label,
-                   json_data
-            FROM {table.TableName}
-            WHERE EXISTS (SELECT 1 FROM json_each(json_data, '$.tag_list') WHERE value = $tagHandle)
-            """));
+             SELECT '{table.ObjectType}' AS object_type,
+                    handle,
+                    {table.GrampsIdExpression} AS gramps_id,
+                    {table.LabelExpression} AS label,
+                    json_data
+             FROM {table.TableName}
+             WHERE EXISTS (SELECT 1 FROM json_each(json_data, '$.tag_list') WHERE value = $tagHandle)
+             """));
 
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
-            SELECT object_type, handle, gramps_id, label, json_data
-            FROM ({unionSql})
-            ORDER BY object_type, label, gramps_id, handle
-            LIMIT $limit OFFSET $offset
-            """;
+                               SELECT object_type, handle, gramps_id, label, json_data
+                               FROM ({unionSql})
+                               ORDER BY object_type, label, gramps_id, handle
+                               LIMIT $limit OFFSET $offset
+                               """;
         command.Parameters.AddWithValue("$tagHandle", resolvedTagHandle);
         command.Parameters.AddWithValue("$limit", limit);
         command.Parameters.AddWithValue("$offset", offset);
@@ -428,14 +351,17 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
                 reader.GetString(0),
                 reader.GetString(1),
                 reader.IsDBNull(2) ? null : reader.GetString(2),
-                reader.IsDBNull(3) || string.IsNullOrWhiteSpace(reader.GetString(3)) ? reader.GetString(1) : reader.GetString(3),
+                reader.IsDBNull(3) || string.IsNullOrWhiteSpace(reader.GetString(3))
+                    ? reader.GetString(1)
+                    : reader.GetString(3),
                 JsonMapping.StringArray(document.RootElement, "tag_list")));
         }
 
         return objects;
     }
 
-    private async Task<string?> GetObjectAsync(string tableName, string? handle, string? grampsId, CancellationToken cancellationToken)
+    private async Task<string?> GetObjectAsync(string tableName, string? handle, string? grampsId,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(handle) && string.IsNullOrWhiteSpace(grampsId))
         {
@@ -463,6 +389,143 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
         return result as string;
     }
 
+    private async Task<IReadOnlyList<T>> GetObjectsAsync<T>(
+        string objectName,
+        string tableName,
+        IReadOnlyList<string>? handles,
+        IReadOnlyList<string>? grampsIds,
+        Func<string, T> mapObject,
+        CancellationToken cancellationToken)
+    {
+        var hasHandles = handles is not null;
+        var hasGrampsIds = grampsIds is not null;
+        if (hasHandles == hasGrampsIds)
+        {
+            throw new ArgumentException($"Supply either {objectName} handles or Gramps IDs, but not both.");
+        }
+
+        var lookupValues = hasHandles ? handles! : grampsIds!;
+        var lookupName = hasHandles ? "handles" : "grampsIds";
+        var columnName = hasHandles ? "handle" : "gramps_id";
+
+        if (lookupValues.Count == 0)
+        {
+            throw new ArgumentException($"At least one {objectName} {lookupName} value is required.");
+        }
+
+        if (lookupValues.Count > 100)
+        {
+            throw new ArgumentException($"At most 100 {objectName} {lookupName} values may be requested.");
+        }
+
+        var requestedValues = lookupValues.Where(static value => !string.IsNullOrWhiteSpace(value)).ToArray();
+        if (requestedValues.Length != lookupValues.Count)
+        {
+            throw new ArgumentException($"{ToSentenceCase(objectName)} {lookupName} values must not be empty.");
+        }
+
+        await using var connection = new SqliteConnection(CreateConnectionString());
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        var parameters = requestedValues.Distinct()
+            .Select((value, index) => new { Value = value, Parameter = $"$value{index}" }).ToArray();
+        command.CommandText =
+            $"SELECT json_data, {columnName} FROM {tableName} WHERE {columnName} IN ({string.Join(", ", parameters.Select(static parameter => parameter.Parameter))})";
+        foreach (var parameter in parameters)
+        {
+            command.Parameters.AddWithValue(parameter.Parameter, parameter.Value);
+        }
+
+        var objectsByLookupValue = new Dictionary<string, T>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            objectsByLookupValue[reader.GetString(1)] = mapObject(reader.GetString(0));
+        }
+
+        var objects = new List<T>();
+        foreach (var value in requestedValues)
+        {
+            if (objectsByLookupValue.TryGetValue(value, out var obj))
+            {
+                objects.Add(obj);
+            }
+        }
+
+        return objects;
+    }
+
+    private static IReadOnlyList<string>? ToLookupList(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : [value];
+    }
+
+    private static string ToSentenceCase(string value)
+    {
+        return string.IsNullOrEmpty(value) ? value : char.ToUpperInvariant(value[0]) + value[1..];
+    }
+
+    private static NoteDto MapNote(string note)
+    {
+        using var document = JsonDocument.Parse(note);
+        var root = document.RootElement;
+        return new NoteDto(
+            RequiredString(root, "handle"),
+            JsonMapping.String(root, "gramps_id"),
+            JsonMapping.NoteText(root),
+            JsonMapping.Int(root, "format"),
+            JsonMapping.GrampsTypeName(root, "type"),
+            JsonMapping.StringArray(root, "tag_list"));
+    }
+
+    private static CitationDto MapCitation(string citation)
+    {
+        using var document = JsonDocument.Parse(citation);
+        var root = document.RootElement;
+        return new CitationDto(
+            RequiredString(root, "handle"),
+            JsonMapping.String(root, "gramps_id"),
+            JsonMapping.String(root, "page"),
+            JsonMapping.Int(root, "confidence"),
+            JsonMapping.String(root, "source_handle"),
+            JsonMapping.StringArray(root, "note_list"),
+            JsonMapping.RefArray(root, "media_list"),
+            JsonMapping.StringArray(root, "tag_list"));
+    }
+
+    private static EventDto MapEvent(string @event)
+    {
+        using var document = JsonDocument.Parse(@event);
+        var root = document.RootElement;
+        return new EventDto(
+            RequiredString(root, "handle"),
+            JsonMapping.String(root, "gramps_id"),
+            JsonMapping.GrampsTypeName(root, "type"),
+            JsonMapping.String(root, "description"),
+            JsonMapping.String(root, "place"),
+            JsonMapping.StringArray(root, "note_list"),
+            JsonMapping.StringArray(root, "citation_list"),
+            JsonMapping.RefArray(root, "media_list"),
+            JsonMapping.StringArray(root, "tag_list"));
+    }
+
+    private static SourceDto MapSource(string source)
+    {
+        using var document = JsonDocument.Parse(source);
+        var root = document.RootElement;
+        return new SourceDto(
+            RequiredString(root, "handle"),
+            JsonMapping.String(root, "gramps_id"),
+            JsonMapping.String(root, "title"),
+            JsonMapping.String(root, "author"),
+            JsonMapping.String(root, "pubinfo"),
+            JsonMapping.String(root, "abbrev"),
+            JsonMapping.StringArray(root, "note_list"),
+            JsonMapping.RefArray(root, "media_list"),
+            JsonMapping.StringArray(root, "tag_list"));
+    }
+
     private static TagDto MapTag(string tag)
     {
         using var document = JsonDocument.Parse(tag);
@@ -475,7 +538,8 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.Long(root, "change"));
     }
 
-    private static async Task<string?> ReadTagHandleByNameAsync(SqliteConnection connection, string tagName, CancellationToken cancellationToken)
+    private static async Task<string?> ReadTagHandleByNameAsync(SqliteConnection connection, string tagName,
+        CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT handle FROM tag WHERE name = $name LIMIT 1";
@@ -498,13 +562,18 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
         new("note", "note", "gramps_id", "COALESCE(gramps_id, handle)")
     ];
 
-    private sealed record TaggedObjectTable(string ObjectType, string TableName, string GrampsIdExpression, string LabelExpression);
+    private sealed record TaggedObjectTable(
+        string ObjectType,
+        string TableName,
+        string GrampsIdExpression,
+        string LabelExpression);
 
     private string CreateConnectionString()
     {
         if (!File.Exists(config.DatabasePath))
         {
-            throw new FileNotFoundException($"Gramps SQLite database not found: {config.DatabasePath}", config.DatabasePath);
+            throw new FileNotFoundException($"Gramps SQLite database not found: {config.DatabasePath}",
+                config.DatabasePath);
         }
 
         return new SqliteConnectionStringBuilder

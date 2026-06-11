@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using GrampsDbTool.Data;
 using GrampsDbTool.Models;
-using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 namespace GrampsDbTool.Tools;
@@ -10,13 +9,17 @@ namespace GrampsDbTool.Tools;
 public sealed class SourceTools(GrampsRepository repository)
 {
     [McpServerTool(Name = "get_source", ReadOnly = true, Destructive = false, Idempotent = true)]
-    [Description("Get one Gramps source by handle or Gramps ID. Source fields are read-only in this milestone.")]
-    public async Task<SourceDto> GetSource(
-        [Description("Gramps source handle. Required if grampsId is not supplied.")] string? handle = null,
-        [Description("User-visible Gramps source ID. Required if handle is not supplied.")] string? grampsId = null,
+    [Description(
+        "Get up to 100 Gramps sources by handle or Gramps ID. Supply handles or grampsIds, not both. Existing results are returned in requested order. Source fields are read-only in this milestone.")]
+    public Task<IReadOnlyList<SourceDto>> GetSource(
+        [Description(
+            "Gramps source handles to fetch. Required if grampsIds is not supplied. At least 1 and at most 100 handles are allowed.")]
+        IReadOnlyList<string>? handles = null,
+        [Description(
+            "User-visible Gramps source IDs to fetch. Required if handles is not supplied. At least 1 and at most 100 IDs are allowed.")]
+        IReadOnlyList<string>? grampsIds = null,
         CancellationToken cancellationToken = default)
     {
-        var source = await repository.GetSourceAsync(handle, grampsId, cancellationToken);
-        return source ?? throw new McpException("Source not found.");
+        return repository.GetSourceAsync(handles, grampsIds, cancellationToken);
     }
 }

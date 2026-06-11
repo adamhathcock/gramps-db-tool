@@ -1,7 +1,7 @@
 using System.ComponentModel;
+using System.ComponentModel;
 using GrampsDbTool.Data;
 using GrampsDbTool.Models;
-using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 namespace GrampsDbTool.Tools;
@@ -10,13 +10,17 @@ namespace GrampsDbTool.Tools;
 public sealed class CitationTools(GrampsRepository repository)
 {
     [McpServerTool(Name = "get_citation", ReadOnly = true, Destructive = false, Idempotent = true)]
-    [Description("Get one Gramps citation by handle or Gramps ID. Citations are read-only in this milestone.")]
-    public async Task<CitationDto> GetCitation(
-        [Description("Gramps citation handle. Required if grampsId is not supplied.")] string? handle = null,
-        [Description("User-visible Gramps citation ID. Required if handle is not supplied.")] string? grampsId = null,
+    [Description(
+        "Get up to 100 Gramps citations by handle or Gramps ID. Supply handles or grampsIds, not both. Existing results are returned in requested order. Citations are read-only in this milestone.")]
+    public Task<IReadOnlyList<CitationDto>> GetCitation(
+        [Description(
+            "Gramps citation handles to fetch. Required if grampsIds is not supplied. At least 1 and at most 100 handles are allowed.")]
+        IReadOnlyList<string>? handles = null,
+        [Description(
+            "User-visible Gramps citation IDs to fetch. Required if handles is not supplied. At least 1 and at most 100 IDs are allowed.")]
+        IReadOnlyList<string>? grampsIds = null,
         CancellationToken cancellationToken = default)
     {
-        var citation = await repository.GetCitationAsync(handle, grampsId, cancellationToken);
-        return citation ?? throw new McpException("Citation not found.");
+        return repository.GetCitationAsync(handles, grampsIds, cancellationToken);
     }
 }
