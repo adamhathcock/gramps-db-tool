@@ -13,7 +13,7 @@ var grampsConfig = ConfigLoader.LoadConfig(runtimeOptions.ConfigPath);
 var databasePaths = await new GrampsMetadataReader(grampsConfig).ReadDatabasePathsAsync();
 if (string.IsNullOrEmpty(databasePaths.SavePath))
 {
-    databasePaths =  databasePaths with { SavePath = grampsConfig.BackupPath };
+    databasePaths = databasePaths with { SavePath = grampsConfig.BackupPath };
 }
 
 var builder = WebApplication.CreateBuilder(args);
@@ -28,6 +28,7 @@ builder.Services.AddSingleton<GrampsConnectionFactory>();
 builder.Services.AddSingleton<IMediaPathService, MediaPathService>();
 builder.Services.AddSingleton<GrampsRepository>();
 builder.Services.AddSingleton<MediaWriteService>();
+builder.Services.AddSingleton<ObjectWriteService>();
 
 builder.Services
     .AddMcpServer()
