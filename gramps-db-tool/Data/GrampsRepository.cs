@@ -189,6 +189,12 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
         return await GetObjectsAsync("source", "source", handles, grampsIds, MapSource, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<PlaceDto>> GetPlaceAsync(IReadOnlyList<string>? handles,
+        IReadOnlyList<string>? grampsIds = null, CancellationToken cancellationToken = default)
+    {
+        return await GetObjectsAsync("place", "place", handles, grampsIds, MapPlace, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<TagDto>> ListTagsAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = new SqliteConnection(CreateConnectionString());
@@ -523,6 +529,29 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.String(root, "abbrev"),
             JsonMapping.StringArray(root, "note_list"),
             JsonMapping.RefArray(root, "media_list"),
+            JsonMapping.StringArray(root, "tag_list"));
+    }
+
+    private static PlaceDto MapPlace(string place)
+    {
+        using var document = JsonDocument.Parse(place);
+        var root = document.RootElement;
+        var primaryName = root.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.Object
+            ? JsonMapping.String(name, "value")
+            : null;
+
+        return new PlaceDto(
+            RequiredString(root, "handle"),
+            JsonMapping.String(root, "gramps_id"),
+            JsonMapping.String(root, "title"),
+            JsonMapping.String(root, "long"),
+            JsonMapping.String(root, "lat"),
+            primaryName,
+            JsonMapping.GrampsTypeName(root, "place_type"),
+            JsonMapping.RefArray(root, "placeref_list"),
+            JsonMapping.RefArray(root, "media_list"),
+            JsonMapping.StringArray(root, "citation_list"),
+            JsonMapping.StringArray(root, "note_list"),
             JsonMapping.StringArray(root, "tag_list"));
     }
 

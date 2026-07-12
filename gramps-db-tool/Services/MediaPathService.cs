@@ -18,7 +18,7 @@ public sealed class MediaPathService(GrampsDatabasePaths databasePaths) : IMedia
     {
         ValidateMediaPath(storedPath);
 
-        return storedPath;
+        return Path.GetFullPath(Path.Combine(mediaRoot, storedPath));
     }
 
     public string ToRelativePath(string absolutePath)
@@ -49,6 +49,17 @@ public sealed class MediaPathService(GrampsDatabasePaths databasePaths) : IMedia
         if (string.IsNullOrWhiteSpace(path))
         {
             throw new ArgumentException("Media path is required.", nameof(path));
+        }
+
+        if (Path.IsPathRooted(path))
+        {
+            throw new ArgumentException("Absolute media paths are not allowed.", nameof(path));
+        }
+
+        var resolvedPath = Path.GetFullPath(Path.Combine(mediaRoot, path));
+        if (!IsInsideMediaRoot(resolvedPath))
+        {
+            throw new ArgumentException("Media path must remain inside the Gramps media root.", nameof(path));
         }
     }
 

@@ -31,6 +31,7 @@ public sealed class RepositoryTests
         var family = await repository.GetFamilyAsync("family1", null);
         var @event = await repository.GetEventAsync("event1", null);
         var source = await repository.GetSourceAsync("source1", null);
+        var place = await repository.GetPlaceAsync(["place1"]);
         var media = await repository.GetMediaAsync("media1", null);
         var mediaBatch = await repository.GetMediaAsync(["media2", "missing", "media1"]);
         var mediaBatchByGrampsId = await repository.GetMediaAsync(null, ["O0002", "missing", "O0001"]);
@@ -53,6 +54,15 @@ public sealed class RepositoryTests
         Assert.Equal("person3", Assert.Single(family!.ChildHandles));
         Assert.Equal("Birth", @event?.Type);
         Assert.Equal("Register", source?.Title);
+        Assert.Equal("London", Assert.Single(place).Title);
+        Assert.Equal("place2", Assert.Single(Assert.Single(place).ParentPlaceHandles));
+        Assert.Equal("City", Assert.Single(place).Type);
+        Assert.Equal("-0.1276", Assert.Single(place).Longitude);
+        Assert.Equal("51.5072", Assert.Single(place).Latitude);
+        Assert.Equal("London", Assert.Single(place).PrimaryName);
+        Assert.Equal(["media1"], Assert.Single(place).MediaHandles);
+        Assert.Equal(["citation1"], Assert.Single(place).CitationHandles);
+        Assert.Equal(["note1"], Assert.Single(place).NoteHandles);
         Assert.Equal(Path.Combine(database.MediaPath, "photos/ada.jpg"), media?.ResolvedPath);
         Assert.Collection(mediaBatch,
             item => Assert.Equal("media2", item.Handle),
@@ -114,6 +124,8 @@ public sealed class RepositoryTests
         var eventsByGrampsId = await repository.GetEventAsync(null, ["E0001", "missing"]);
         var sources = await repository.GetSourceAsync(["source1", "missing"]);
         var sourcesByGrampsId = await repository.GetSourceAsync(null, ["S0001", "missing"]);
+        var places = await repository.GetPlaceAsync(["place1", "missing"]);
+        var placesByGrampsId = await repository.GetPlaceAsync(null, ["P0001", "missing"]);
         var notes = await repository.GetNoteAsync(["note1", "missing"]);
         var notesByGrampsId = await repository.GetNoteAsync(null, ["N0001", "missing"]);
         var citations = await repository.GetCitationAsync(["citation1", "missing"]);
@@ -123,6 +135,8 @@ public sealed class RepositoryTests
         Assert.Equal("event1", Assert.Single(eventsByGrampsId).Handle);
         Assert.Equal("source1", Assert.Single(sources).Handle);
         Assert.Equal("source1", Assert.Single(sourcesByGrampsId).Handle);
+        Assert.Equal("place1", Assert.Single(places).Handle);
+        Assert.Equal("place1", Assert.Single(placesByGrampsId).Handle);
         Assert.Equal("note1", Assert.Single(notes).Handle);
         Assert.Equal("note1", Assert.Single(notesByGrampsId).Handle);
         Assert.Equal("citation1", Assert.Single(citations).Handle);
@@ -191,6 +205,7 @@ public sealed class RepositoryTests
     [Theory]
     [InlineData("event")]
     [InlineData("source")]
+    [InlineData("place")]
     [InlineData("note")]
     [InlineData("citation")]
     public async Task RepositoryRejectsInvalidBatchLookupArguments(string objectType)
@@ -244,6 +259,7 @@ public sealed class RepositoryTests
         {
             "event" => repository.GetEventAsync(handles, grampsIds),
             "source" => repository.GetSourceAsync(handles, grampsIds),
+            "place" => repository.GetPlaceAsync(handles, grampsIds),
             "note" => repository.GetNoteAsync(handles, grampsIds),
             "citation" => repository.GetCitationAsync(handles, grampsIds),
             _ => throw new ArgumentOutOfRangeException(nameof(objectType), objectType, null)

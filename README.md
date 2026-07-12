@@ -19,6 +19,7 @@ Current read-only tools:
 - `get_family`
 - `get_event`
 - `get_source`
+- `get_place`
 - `get_citation`
 - `get_note`
 - `get_media`

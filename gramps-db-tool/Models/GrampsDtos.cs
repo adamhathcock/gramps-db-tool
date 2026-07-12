@@ -91,6 +91,21 @@ public sealed record SourceDto(
     IReadOnlyList<string> TagHandles
 );
 
+public sealed record PlaceDto(
+    string Handle,
+    string? GrampsId,
+    string? Title,
+    string? Longitude,
+    string? Latitude,
+    string? PrimaryName,
+    string? Type,
+    IReadOnlyList<string> ParentPlaceHandles,
+    IReadOnlyList<string> MediaHandles,
+    IReadOnlyList<string> CitationHandles,
+    IReadOnlyList<string> NoteHandles,
+    IReadOnlyList<string> TagHandles
+);
+
 public sealed record TagDto(
     string Handle,
     string Name,

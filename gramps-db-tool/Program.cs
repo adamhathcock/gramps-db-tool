@@ -42,6 +42,7 @@ builder.Services
     .WithTools<FamilyTools>()
     .WithTools<EventTools>()
     .WithTools<SourceTools>()
+    .WithTools<PlaceTools>()
     .WithTools<TagTools>();
 
 var app = builder.Build();
