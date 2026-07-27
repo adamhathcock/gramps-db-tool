@@ -1,67 +1,83 @@
-# Gramps C# MCP Server Plan
+# Gramps DB Tool Plan
 
 ## Goal
 
-Build a **C# MCP server** that accesses Gramps data safely, with:
+Provide direct, controlled HTTP MCP access to a Gramps JSON-backed SQLite database for genealogy review and narrowly scoped maintenance.
 
-* Gramps media path support via Gramps database metadata
-* unsafe genealogy fields read-only
-* editable media paths
-* editable notes
-* editable citations
-
----
-
-## Architecture
+The governing model is:
 
 ```text
-MCP Client
-  ↓
-C# Gramps MCP Server
-  ↓
-Gramps Data Access Layer
-  ↓
-Gramps database / export / config
+read broadly
+write narrowly
+keep Gramps as the primary genealogy application
 ```
 
-Recommended first version:
+The server must not expose a general object mutation API or raw serialized records.
 
-```text
-C# MCP Server
-  ↓
-Read Gramps SQLite/XML/exported data
-  ↓
-Write only controlled update files or supported DB fields
-```
+## Current Status
 
-Avoid raw mutation of complex Gramps internals until the object model is fully understood.
+The server:
 
----
+- targets .NET 8
+- serves HTTP MCP at `/gramps`
+- reads Gramps JSON-backed SQLite tables directly
+- resolves media and backup locations from Gramps database metadata
+- opens repository read connections in read-only mode
+- disables writes unless enabled at runtime
+- protects writes with validation, a single-writer lock, and a pre-mutation backup
+- maintains Gramps reference-map rows for supported creates and tag changes
 
-## Components
+There are currently 23 MCP tools: 15 read-only tools and 8 write or operational tools.
 
-## 1. MCP Server
+## Implemented Tools
 
-Use a C# MCP server library or stdio-based MCP implementation.
-
-Core tools:
+### Discovery And Navigation
 
 ```text
 search_people
 list_objects
 find_backlinks
+list_tags
+find_objects_by_tag
+```
+
+`list_objects` can enumerate or search all ten primary Gramps object types:
+
+```text
+person
+family
+event
+place
+source
+citation
+media
+repository
+note
+tag
+```
+
+`find_backlinks` uses the Gramps `reference` table to find objects that reference a handle.
+
+### Typed Retrieval
+
+```text
 get_person
 get_family
 get_event
-get_source
 get_place
+get_source
 get_citation
-get_note
 get_media
 get_repository
-list_tags
+get_note
 get_tags
-find_objects_by_tag
+```
+
+The batch getters accept up to 100 handles or Gramps IDs, preserve requested order for found objects, and report identifiers that were not found. Tags use names instead of Gramps IDs.
+
+### Controlled Writes
+
+```text
 update_media
 create_note
 update_note
@@ -71,408 +87,241 @@ update_event
 update_source
 ```
 
----
+### Backup
 
-## 2. Gramps Configuration Reader
+```text
+create_backup
+```
 
-Purpose:
+## Read Contracts
 
-* locate Gramps config
-* read configured database path
-* read Gramps database media path metadata
-* read Gramps database save/backup path metadata
-* resolve relative media paths
+### Paging
 
-Target rule:
+Paged tools return:
 
-* normal startup options belong in `gramps-db-tool.json`
-* CLI/env should only select the config file or explicitly enable writes
-* persisted config must not silently enable write behavior
+```text
+items
+limit
+offset
+returnedCount
+totalCount
+hasMore
+nextOffset
+```
 
-Current target config file:
+Rules:
+
+- limits must be from 1 to 500
+- offsets must not be negative
+- count and page reads use one SQLite read transaction
+- ordering includes deterministic handle tiebreakers
+
+### Domain DTOs
+
+Read DTOs are independent of mutable Gramps internals and expose typed projections rather than raw JSON.
+
+Implemented structured data includes:
+
+- Gramps type numeric values and custom names
+- exact, partial, ranged, textual, and custom-new-year date fields
+- privacy markers and change timestamps
+- event references and roles
+- child references and parent relationship types
+- media references and crop rectangles
+- person associations
+- dated place references
+- repository references, call numbers, and media types
+- internal Gramps and external styled-note links
+
+Repository objects are fully retrievable, and source DTOs expose their repository references.
+
+## Write Scope
+
+### Media
+
+`update_media` may update:
+
+- stored media path
+- complete media tag list
+- conversion of an absolute path inside the database-derived media root to a relative path
+
+It must not permit paths outside the database-derived media root.
+
+### Notes
+
+`create_note` creates a standalone plain-text note with optional tags.
+
+`update_note` may update:
+
+- plain note text
+- complete note tag list
+
+Changing note text intentionally replaces styled text with a valid plain `StyledText` object and removes stale styled-link backlinks.
+
+### Citations
+
+`create_citation` creates a standalone citation linked to an existing source, with optional tags.
+
+`update_citation` may update:
+
+- page or reference text
+- confidence
+- complete citation tag list
+
+Source-link mutation remains blocked after creation.
+
+### Events
+
+`update_event` may update:
+
+- description
+- complete event tag list
+
+Event type, date, place, ownership, notes, citations, and media links remain blocked.
+
+### Sources
+
+`update_source` may update:
+
+- title
+- author
+- publication information
+- abbreviation
+- complete source tag list
+
+Repository, note, media, citation, and other relationship edits remain blocked.
+
+## Explicit Gramps IDs
+
+`create_note` and `create_citation` require the caller to provide a unique Gramps ID.
+
+This is deliberate:
+
+- Gramps stores allocation counters in database metadata
+- effective ID prefix templates come from global Gramps preferences, not the database
+- prefixes can be customized
+- defaults differ between Gramps versions
+
+The server must not guess an ID prefix or persist an application-specific prefix. Creation validates ID uniqueness transactionally and generates a collision-checked opaque handle.
+
+## Blocked Mutations
+
+The MCP surface must continue to block direct edits to:
+
+- person names, alternate names, gender, handles, and Gramps IDs
+- parents, children, spouses, family links, and person associations
+- event type, date, place, role, and ownership links
+- place identity, coordinates, names, and hierarchy
+- source, citation, note, media, and repository attachment relationships
+- repository objects
+- private flags
+- backlinks except internal maintenance required by an allowed write
+- raw JSON, blob, pickle, and generic serialized object data
+
+There must be no generic `update_object`, arbitrary JSON patch, or direct reference mutation tool.
+
+## Write Safety
+
+Writes are enabled only with:
+
+```text
+--allow-writes
+GRAMPS_ALLOW_WRITES=1|true|yes
+```
+
+Persisted configuration must never enable writes.
+
+Every write must:
+
+1. validate request shape and allowed fields
+2. enforce the runtime write gate
+3. acquire the single-writer lock
+4. create a backup in the database-derived save path
+5. open a read-write connection and transaction
+6. validate target objects, Gramps IDs, source handles, and tag handles
+7. apply only the explicit patch
+8. synchronize affected reference-map rows
+9. commit atomically
+10. return the typed updated object
+
+## Configuration And Paths
+
+The application config selects the database:
 
 ```json
 {
-  "databasePath": "/path/to/sqlite.db"
+  "databasePath": "/path/to/gramps/sqlite.db"
 }
 ```
 
-Planned future config file:
-
-```json
-{
-  "databasePath": "/path/to/sqlite.db",
-  "allowAbsoluteMediaPaths": false,
-  "allowMediaPathsOutsideRoot": false
-}
-```
-
-Database-derived paths:
-
-* media base path must come from Gramps database metadata, equivalent to Gramps `get_mediapath()`
-* save/backup base path must come from Gramps database metadata, equivalent to Gramps `get_save_path()`
-* if required metadata is missing or empty, error instead of guessing
-* do not fall back to config, current working directory, database directory, or environment variables for media or backup paths
-
-Allowed runtime options:
+The config file can be selected with:
 
 ```text
 --config <path>
 --config=<path>
 GRAMPS_DB_TOOL_CONFIG=/path/to/gramps-db-tool.json
---allow-writes
-GRAMPS_ALLOW_WRITES=1|true|yes
-```
-
-Removed from target design:
-
-```text
---database <path>
--d <path>
---database=<path>
-GRAMPS_SQLITE_PATH=/path/to/sqlite.db
-```
-
-Reason: database location is normal application configuration and should be recorded in the config file.
-
-Resolution rules:
-
-1. choose config file using `--config`, then `GRAMPS_DB_TOOL_CONFIG`, then `./gramps-db-tool.json`
-2. load only `databasePath` from the selected config file
-3. read media path from Gramps database metadata
-4. read save/backup path from Gramps database metadata
-5. error if required database metadata is missing or empty
-6. do not read database, media, or backup paths from CLI/env
-7. enable writes only through `--allow-writes` or `GRAMPS_ALLOW_WRITES`
-8. never support `allowWrites` or an equivalent write-enabling setting in the config file
-
-Supported config locations:
-
-```text
-Windows: %APPDATA%\gramps\
-macOS:   ~/Library/Application Support/gramps/
-Linux:   ~/.gramps/ or ~/.local/share/gramps/
-```
-
-Expose:
-
-```csharp
-public sealed record GrampsConfig(
-    string ConfigDirectory,
-    string DatabasePath
-);
-
-public sealed record GrampsDatabasePaths(
-    string MediaBasePath,
-    string SavePath
-);
-```
-
-Later code changes:
-
-* remove database path CLI/env resolution from `Program.cs`
-* add metadata readers for Gramps media path and save path
-* keep write enablement runtime-only
-* update startup errors to reference `databasePath` in config
-* update media/backup path errors to fail when database metadata is missing
-* update README examples after implementation
-
----
-
-## 3. Media Path Service
-
-Responsibilities:
-
-* resolve relative media paths
-* validate paths
-* prevent path traversal
-* allow media path updates
-
-```csharp
-public interface IMediaPathService
-{
-    string ResolvePath(string storedPath);
-    string ToRelativePath(string absolutePath);
-    bool IsInsideMediaRoot(string path);
-    void ValidateMediaPath(string path);
-}
 ```
 
 Rules:
 
-* relative paths are resolved against the Gramps database media path metadata
-* missing or empty media path metadata is an error
-* absolute paths are allowed only if explicitly enabled
-* reject `../`
-* reject paths outside the media root unless configured
+- database location belongs in `gramps-db-tool.json`
+- database paths are not accepted from CLI or environment variables
+- media base path must come from Gramps database metadata
+- backup base path must come from Gramps database metadata
+- no media or backup fallback may use config, environment, current directory, or database directory
+- missing required database metadata must fail rather than guess
 
----
+### Known Path-Safety Issue
 
-## 4. Read-Only Domain Model
+`ConfigLoader` and `Program.cs` currently support a configured `backupPath` fallback when database save-path metadata is empty. This conflicts with the required database-derived backup-path rule and must be removed before treating path safety as complete.
 
-Create C# DTOs independent of Gramps internals:
-
-```csharp
-public sealed record PersonDto(
-    string Handle,
-    string GrampsId,
-    string DisplayName,
-    IReadOnlyList<EventRefDto> Events,
-    IReadOnlyList<FamilyRefDto> Families,
-    IReadOnlyList<NoteRefDto> Notes,
-    IReadOnlyList<CitationRefDto> Citations
-);
-```
-
-Do not expose mutable setters on unsafe data.
-
----
-
-## 5. Unsafe Fields: Read-Only
-
-These must not be directly editable through MCP.
-
-### Identity
+## Project Structure
 
 ```text
-primary name
-alternate names
-gender
-person handle
-Gramps ID
+gramps-db-tool/
+  Configuration/
+  Data/
+  Models/
+  Safety/
+  Services/
+  Tools/
+  Program.cs
+
+gramps-db-tool.Tests/
+  repository, mapping, configuration, media-path, tool-contract,
+  and write-safety tests
 ```
 
-### Relationships
+## Verification
+
+Required verification commands:
+
+```bash
+rtk dotnet build "gramps-db-tool/GrampsDbTool.csproj"
+dotnet test "gramps-db-tool.Tests/GrampsDbTool.Tests.csproj"
+```
+
+Latest verified result:
 
 ```text
-parents
-children
-spouses
-family links
-event ownership links
-media attachment links
+build: 0 errors, 0 warnings
+tests: 50 passed, 0 failed
 ```
 
-### Core Facts
+The current .NET tests validate paging, discovery, repositories, backlinks, structured mappings, missing-key reporting, creation, write gates, backups, validation, and reference-map synchronization.
 
-```text
-birth
-death
-burial
-baptism
-christening
-residence
-occupation
-immigration
-emigration
-military service
-```
+Residual integration coverage still needed:
 
-### Sources and Places
+- list and call tools through a live MCP transport test
+- deserialize newly created note and citation records with the matching Python Gramps JSON serializer
+- validate against a real supported Gramps database fixture
 
-```text
-source links
-citation links to facts
-place assignments
-place hierarchy
-```
+## Next Milestones
 
-### Internals
+1. Remove the configured backup-path fallback and enforce database-derived save-path metadata.
+2. Add live MCP transport contract tests.
+3. Add Python-Gramps compatibility tests for created records.
+4. Prove standalone note and citation creation against a real Gramps database.
+5. Consider explicit attachment tools only after standalone creation is proven.
 
-```text
-handle
-change timestamp
-private flag
-tags
-backlinks
-serialized object data
-```
-
----
-
-## 6. Editable Fields
-
-### Notes
-
-Allowed:
-
-```text
-create note
-update note text
-delete note
-attach note
-detach note
-```
-
-Tools:
-
-```text
-create_note
-update_note
-delete_note
-attach_note
-detach_note
-```
-
-### Citations
-
-Allowed:
-
-```text
-create citation
-update citation text/details
-attach citation
-detach citation
-```
-
-Tools:
-
-```text
-create_citation
-update_citation
-attach_citation
-detach_citation
-```
-
-### Media Paths
-
-Allowed:
-
-```text
-update media path
-convert absolute path to relative
-convert relative path to absolute
-```
-
-Tool:
-
-```text
-update_media
-```
-
----
-
-## 7. Write Safety
-
-Every write should:
-
-1. create a backup
-2. acquire a single-writer lock
-3. validate the target object
-4. validate the patch
-5. apply update
-
-Backup path rules:
-
-* backup base path must come from Gramps database save path metadata
-* missing or empty save path metadata is an error
-* do not fall back to the SQLite database directory, current working directory, config, or environment variables
-
----
-
-## 8. Patch-Based Write Model
-
-Do not let tools accept arbitrary object JSON.
-
-Prefer:
-
-```csharp
-public sealed record UpdateNoteRequest(
-    string NoteHandle,
-    string NewText
-);
-
-public sealed record UpdateMediaPathRequest(
-    string MediaHandle,
-    string NewPath,
-    bool ConvertToRelative
-);
-```
-
-Avoid:
-
-```csharp
-UpdatePerson(PersonDto person)
-UpdateObject(Dictionary<string, object> patch)
-```
-
----
-
-## 9. Recommended Project Layout
-
-```text
-GrampsMcp/
-  src/
-    GrampsMcp.Server/
-      Program.cs
-      Tools/
-        PersonTools.cs
-        NoteTools.cs
-        CitationTools.cs
-        MediaTools.cs
-
-    GrampsMcp.Core/
-      Models/
-      Services/
-      Validation/
-
-    GrampsMcp.Gramps/
-      GrampsConfigReader.cs
-      GrampsRepository.cs
-      MediaPathService.cs
-
-  tests/
-    GrampsMcp.Tests/
-```
-
----
-
-## 10. First Milestone
-
-Implemented read-only foundation:
-
-```text
-search_people
-list_objects
-find_backlinks
-get_person
-get_family
-get_event
-get_source
-get_place
-get_media
-get_note
-get_citation
-get_repository
-list_tags
-get_tags
-find_objects_by_tag
-```
-
-Implemented standalone writes in this order:
-
-```text
-update_media
-create_note
-update_note
-create_citation
-update_citation
-```
-
----
-
-## Bottom Line
-
-For C#, the safest model is:
-
-```text
-C# MCP server
-  ↓
-read broad Gramps data
-  ↓
-write only notes, citations, and media paths
-  ↓
-block all identity, relationship, event, place, and fact edits
-```
-
-Do not expose a general Gramps object update API.
+Attachment tools must remain narrow and typed. They must never become a generic relationship update API.
