@@ -3,10 +3,6 @@ using GrampsDbTool.Data;
 using GrampsDbTool.Safety;
 using GrampsDbTool.Services;
 using GrampsDbTool.Tools;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 var runtimeOptions = ConfigLoader.LoadRuntimeOptions(args);
 var grampsConfig = ConfigLoader.LoadConfig(runtimeOptions.ConfigPath);
@@ -43,7 +39,9 @@ builder.Services
     .WithTools<EventTools>()
     .WithTools<SourceTools>()
     .WithTools<PlaceTools>()
-    .WithTools<TagTools>();
+    .WithTools<TagTools>()
+    .WithTools<RepositoryTools>()
+    .WithTools<ObjectTools>();
 
 var app = builder.Build();
 var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");

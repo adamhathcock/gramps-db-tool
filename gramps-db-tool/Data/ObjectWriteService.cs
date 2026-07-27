@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using GrampsDbTool.Models;
 using GrampsDbTool.Safety;
-using GrampsDbTool.Services;
 using Microsoft.Data.Sqlite;
 
 namespace GrampsDbTool.Data;
@@ -14,6 +13,154 @@ public sealed class ObjectWriteService(
     GrampsConnectionFactory connectionFactory,
     GrampsRepository repository)
 {
+    public async Task<NoteDto?> CreateNoteAsync(CreateNoteRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateHandle(request.GrampsId, "Note Gramps ID");
+        ValidateHandle(request.Text, "Note text");
+        ValidateTagHandles(request.TagHandles);
+        writeGuard.RequireWritesEnabled();
+
+        using var lockHandle = await singleWriterLock.AcquireAsync(cancellationToken);
+        await backupService.CreateBackupAsync(cancellationToken);
+
+        var change = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        await using var connection = connectionFactory.CreateReadWriteConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await RequireGrampsIdAvailableAsync(connection, transaction, "note", request.GrampsId, cancellationToken);
+        await RequireTagsExistAsync(connection, transaction, request.TagHandles ?? [], cancellationToken);
+        var handle = await CreateUniqueHandleAsync(connection, transaction, "note", cancellationToken);
+        var tagList = CreateStringArray(request.TagHandles);
+        var node = new JsonObject
+        {
+            ["_class"] = "Note",
+            ["handle"] = handle,
+            ["gramps_id"] = request.GrampsId,
+            ["text"] = new JsonObject
+            {
+                ["_class"] = "StyledText",
+                ["string"] = request.Text,
+                ["tags"] = new JsonArray()
+            },
+            ["format"] = 0,
+            ["type"] = new JsonObject
+            {
+                ["_class"] = "NoteType",
+                ["value"] = 1,
+                ["string"] = string.Empty
+            },
+            ["change"] = change,
+            ["tag_list"] = tagList,
+            ["private"] = false
+        };
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText = """
+                              INSERT INTO note (handle, json_data, gramps_id, format, change, private)
+                              VALUES ($handle, $json, $grampsId, 0, $change, 0)
+                              """;
+        command.Parameters.AddWithValue("$handle", handle);
+        command.Parameters.AddWithValue("$json",
+            node.ToJsonString(new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        command.Parameters.AddWithValue("$grampsId", request.GrampsId);
+        command.Parameters.AddWithValue("$change", change);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        await InsertReferencesAsync(connection, transaction, handle, "Note", "Tag", request.TagHandles ?? [],
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return await repository.GetNoteAsync(handle, null, cancellationToken);
+    }
+
+    public async Task<CitationDto?> CreateCitationAsync(CreateCitationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateHandle(request.GrampsId, "Citation Gramps ID");
+        ValidateHandle(request.SourceHandle, "Source handle");
+        if (request.Page is null)
+        {
+            throw new ArgumentException("Citation page must not be null.");
+        }
+
+        if (request.Confidence is < 0 or > 4)
+        {
+            throw new ArgumentOutOfRangeException(nameof(request.Confidence),
+                "Citation confidence must be from 0 to 4.");
+        }
+
+        ValidateTagHandles(request.TagHandles);
+        writeGuard.RequireWritesEnabled();
+
+        using var lockHandle = await singleWriterLock.AcquireAsync(cancellationToken);
+        await backupService.CreateBackupAsync(cancellationToken);
+
+        var change = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        await using var connection = connectionFactory.CreateReadWriteConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await RequireGrampsIdAvailableAsync(connection, transaction, "citation", request.GrampsId,
+            cancellationToken);
+        await RequireObjectExistsAsync(connection, transaction, "source", request.SourceHandle, cancellationToken);
+        await RequireTagsExistAsync(connection, transaction, request.TagHandles ?? [], cancellationToken);
+        var handle = await CreateUniqueHandleAsync(connection, transaction, "citation", cancellationToken);
+        var node = new JsonObject
+        {
+            ["_class"] = "Citation",
+            ["handle"] = handle,
+            ["gramps_id"] = request.GrampsId,
+            ["date"] = new JsonObject
+            {
+                ["_class"] = "Date",
+                ["calendar"] = 0,
+                ["modifier"] = 0,
+                ["quality"] = 0,
+                ["dateval"] = new JsonArray(0, 0, 0, false),
+                ["text"] = string.Empty,
+                ["sortval"] = 0,
+                ["newyear"] = 0,
+                ["format"] = null
+            },
+            ["page"] = request.Page,
+            ["confidence"] = request.Confidence,
+            ["source_handle"] = request.SourceHandle,
+            ["note_list"] = new JsonArray(),
+            ["media_list"] = new JsonArray(),
+            ["attribute_list"] = new JsonArray(),
+            ["change"] = change,
+            ["tag_list"] = CreateStringArray(request.TagHandles),
+            ["private"] = false
+        };
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText = """
+                              INSERT INTO citation
+                                  (handle, json_data, gramps_id, page, confidence, source_handle, change, private)
+                              VALUES
+                                  ($handle, $json, $grampsId, $page, $confidence, $sourceHandle, $change, 0)
+                              """;
+        command.Parameters.AddWithValue("$handle", handle);
+        command.Parameters.AddWithValue("$json",
+            node.ToJsonString(new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        command.Parameters.AddWithValue("$grampsId", request.GrampsId);
+        command.Parameters.AddWithValue("$page", request.Page);
+        command.Parameters.AddWithValue("$confidence", request.Confidence);
+        command.Parameters.AddWithValue("$sourceHandle", request.SourceHandle);
+        command.Parameters.AddWithValue("$change", change);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        await InsertReferencesAsync(connection, transaction, handle, "Citation", "Source", [request.SourceHandle],
+            cancellationToken);
+        await InsertReferencesAsync(connection, transaction, handle, "Citation", "Tag", request.TagHandles ?? [],
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return await repository.GetCitationAsync(handle, null, cancellationToken);
+    }
+
     public async Task<NoteDto?> UpdateNoteAsync(UpdateNoteRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -38,11 +185,17 @@ public sealed class ObjectWriteService(
             {
                 if (request.NewText is not null)
                 {
-                    node["text"] = new JsonObject { ["string"] = request.NewText };
+                    node["text"] = new JsonObject
+                    {
+                        ["_class"] = "StyledText",
+                        ["string"] = request.NewText,
+                        ["tags"] = new JsonArray()
+                    };
                 }
             },
             () => repository.GetNoteAsync(request.NoteHandle, null, cancellationToken),
-            cancellationToken);
+            cancellationToken,
+            clearNonTagReferences: request.NewText is not null);
     }
 
     public async Task<CitationDto?> UpdateCitationAsync(UpdateCitationRequest request,
@@ -212,7 +365,8 @@ public sealed class ObjectWriteService(
         Action<JsonObject> patchJson,
         Func<Task<T?>> readUpdated,
         CancellationToken cancellationToken,
-        Action<JsonObject>? beforePatch = null)
+        Action<JsonObject>? beforePatch = null,
+        bool clearNonTagReferences = false)
     {
         ValidateTagHandles(tagHandles);
         writeGuard.RequireWritesEnabled();
@@ -265,6 +419,11 @@ public sealed class ObjectWriteService(
                 $"{tableName} update failed because the target row was not updated exactly once.");
         }
 
+        await DeleteReferencesAsync(connection, transaction, handle, clearNonTagReferences ? null : "Tag",
+            cancellationToken);
+        await InsertReferencesAsync(connection, transaction, handle, ToSentenceCase(tableName), "Tag",
+            ReadStringArray(node, "tag_list"), cancellationToken);
+
         await transaction.CommitAsync(cancellationToken);
 
         return await readUpdated();
@@ -286,6 +445,118 @@ public sealed class ObjectWriteService(
         }
 
         return json;
+    }
+
+    private static async Task<string> CreateUniqueHandleAsync(SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction, string tableName, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var handle = Guid.NewGuid().ToString("N");
+            await using var command = connection.CreateCommand();
+            command.Transaction = (SqliteTransaction)transaction;
+            command.CommandText = $"SELECT 1 FROM {tableName} WHERE handle = $handle LIMIT 1";
+            command.Parameters.AddWithValue("$handle", handle);
+            if (await command.ExecuteScalarAsync(cancellationToken) is null)
+            {
+                return handle;
+            }
+        }
+
+        throw new InvalidOperationException($"Unable to generate a unique {tableName} handle.");
+    }
+
+    private static async Task RequireGrampsIdAvailableAsync(SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction, string tableName, string grampsId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText = $"SELECT 1 FROM {tableName} WHERE gramps_id = $grampsId LIMIT 1";
+        command.Parameters.AddWithValue("$grampsId", grampsId);
+        if (await command.ExecuteScalarAsync(cancellationToken) is not null)
+        {
+            throw new InvalidOperationException($"A {tableName} with Gramps ID '{grampsId}' already exists.");
+        }
+    }
+
+    private static async Task RequireObjectExistsAsync(SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction, string tableName, string handle,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText = $"SELECT 1 FROM {tableName} WHERE handle = $handle LIMIT 1";
+        command.Parameters.AddWithValue("$handle", handle);
+        if (await command.ExecuteScalarAsync(cancellationToken) is null)
+        {
+            throw new InvalidOperationException($"Unknown {tableName} handle: {handle}.");
+        }
+    }
+
+    private static JsonArray CreateStringArray(IReadOnlyList<string>? values)
+    {
+        var array = new JsonArray();
+        foreach (var value in values ?? [])
+        {
+            array.Add(value);
+        }
+
+        return array;
+    }
+
+    private static IReadOnlyList<string> ReadStringArray(JsonObject node, string propertyName)
+    {
+        if (node[propertyName] is not JsonArray array)
+        {
+            return [];
+        }
+
+        return array.Select(static item => item?.GetValue<string>())
+            .Where(static value => !string.IsNullOrWhiteSpace(value)).OfType<string>().ToArray();
+    }
+
+    private static async Task DeleteReferencesAsync(SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction, string objectHandle, string? referenceClass,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText = referenceClass is null
+            ? "DELETE FROM reference WHERE obj_handle = $objectHandle"
+            : "DELETE FROM reference WHERE obj_handle = $objectHandle AND ref_class = $referenceClass";
+        command.Parameters.AddWithValue("$objectHandle", objectHandle);
+        if (referenceClass is not null)
+        {
+            command.Parameters.AddWithValue("$referenceClass", referenceClass);
+        }
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task InsertReferencesAsync(SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction, string objectHandle, string objectClass, string referenceClass,
+        IReadOnlyList<string> referenceHandles, CancellationToken cancellationToken)
+    {
+        foreach (var referenceHandle in referenceHandles)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = (SqliteTransaction)transaction;
+            command.CommandText = """
+                                  INSERT INTO reference (obj_handle, obj_class, ref_handle, ref_class)
+                                  VALUES ($objectHandle, $objectClass, $referenceHandle, $referenceClass)
+                                  """;
+            command.Parameters.AddWithValue("$objectHandle", objectHandle);
+            command.Parameters.AddWithValue("$objectClass", objectClass);
+            command.Parameters.AddWithValue("$referenceHandle", referenceHandle);
+            command.Parameters.AddWithValue("$referenceClass", referenceClass);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    private static string ToSentenceCase(string value)
+    {
+        return string.IsNullOrEmpty(value) ? value : char.ToUpperInvariant(value[0]) + value[1..];
     }
 
     private static void ValidateHandle(string handle, string name)

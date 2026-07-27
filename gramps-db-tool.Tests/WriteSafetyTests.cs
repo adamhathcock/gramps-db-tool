@@ -176,6 +176,8 @@ public sealed class WriteSafetyTests
         Assert.Equal("photos/ada.jpg", reader.GetString(0));
         Assert.Equal("tag2", reader.GetString(1));
         Assert.Equal(1, reader.GetInt32(2));
+        Assert.Equal(1, CountReferences(database, "media1", "tag2", "Tag"));
+        Assert.Equal(0, CountReferences(database, "media1", "tag1", "Tag"));
     }
 
     [Fact]
@@ -250,6 +252,9 @@ public sealed class WriteSafetyTests
         Assert.Equal(["tag1"], updated.TagHandles);
         Assert.NotEmpty(Directory.GetFiles(database.SavePath, "gramps-db-tool-*.sqlite.db"));
         Assert.Equal("Updated note", ReadJsonValue(database, "note", "note1", "$.text.string"));
+        Assert.Equal("StyledText", ReadJsonValue(database, "note", "note1", "$.text._class"));
+        Assert.Equal(0, CountReferences(database, "note1", "person1", "Person"));
+        Assert.Equal(1, CountReferences(database, "note1", "tag1", "Tag"));
     }
 
     [Fact]
@@ -264,7 +269,7 @@ public sealed class WriteSafetyTests
         Assert.Equal(4, updated.Confidence);
         Assert.Equal("source1", updated.SourceHandle);
         Assert.Equal(["note1"], updated.NoteHandles);
-        Assert.Equal("media1", Assert.Single(updated.MediaHandles));
+        Assert.Equal("media1", Assert.Single(updated.Media).Handle);
         Assert.Equal(["tag2"], updated.TagHandles);
         Assert.Equal("source1", ReadJsonValue(database, "citation", "citation1", "$.source_handle"));
         Assert.Equal("note1", ReadJsonValue(database, "citation", "citation1", "$.note_list[0]"));
@@ -283,13 +288,15 @@ public sealed class WriteSafetyTests
         Assert.Equal("place1", updated.PlaceHandle);
         Assert.Equal(["note1"], updated.NoteHandles);
         Assert.Equal(["citation1"], updated.CitationHandles);
-        Assert.Equal("media1", Assert.Single(updated.MediaHandles));
+        Assert.Equal("media1", Assert.Single(updated.Media).Handle);
         Assert.Equal(["tag2"], updated.TagHandles);
         Assert.Equal("Birth", ReadJsonValue(database, "event", "event1", "$.type.string"));
         Assert.Equal("place1", ReadJsonValue(database, "event", "event1", "$.place"));
         Assert.Equal("note1", ReadJsonValue(database, "event", "event1", "$.note_list[0]"));
         Assert.Equal("citation1", ReadJsonValue(database, "event", "event1", "$.citation_list[0]"));
         Assert.Equal("media1", ReadJsonValue(database, "event", "event1", "$.media_list[0].ref"));
+        Assert.Equal(1, CountReferences(database, "event1", "tag2", "Tag"));
+        Assert.Equal(0, CountReferences(database, "event1", "tag1", "Tag"));
     }
 
     [Fact]
@@ -306,7 +313,7 @@ public sealed class WriteSafetyTests
         Assert.Equal("New Pub", updated.PublicationInfo);
         Assert.Equal("NR", updated.Abbreviation);
         Assert.Equal(["note1"], updated.NoteHandles);
-        Assert.Equal("media1", Assert.Single(updated.MediaHandles));
+        Assert.Equal("media1", Assert.Single(updated.Media).Handle);
         Assert.Equal(["tag1"], updated.TagHandles);
         Assert.Equal("note1", ReadJsonValue(database, "source", "source1", "$.note_list[0]"));
         Assert.Equal("media1", ReadJsonValue(database, "source", "source1", "$.media_list[0].ref"));
@@ -357,6 +364,61 @@ public sealed class WriteSafetyTests
         Assert.Contains("not found", exception.Message);
     }
 
+    [Fact]
+    public async Task CreateNoteUsesExplicitIdAndMaintainsTagReference()
+    {
+        using var database = new TestDatabase();
+        var service = CreateObjectWriteService(database, allowWrites: true);
+
+        var created = await service.CreateNoteAsync(new CreateNoteRequest("N9001", "Created note", ["tag1"]));
+
+        Assert.Equal("N9001", created.NotNull().GrampsId);
+        Assert.Equal("Created note", created.Text);
+        Assert.Equal(1, created.Type?.Value);
+        Assert.Equal(["tag1"], created.TagHandles);
+        Assert.False(created.Private);
+        Assert.Equal("StyledText", ReadJsonValue(database, "note", created.Handle, "$.text._class"));
+        Assert.Equal(1, CountReferences(database, created.Handle, "tag1", "Tag"));
+        Assert.NotEmpty(Directory.GetFiles(database.SavePath, "gramps-db-tool-*.sqlite.db"));
+    }
+
+    [Fact]
+    public async Task CreateCitationUsesExplicitIdAndMaintainsReferences()
+    {
+        using var database = new TestDatabase();
+        var service = CreateObjectWriteService(database, allowWrites: true);
+
+        var created = await service.CreateCitationAsync(
+            new CreateCitationRequest("C9001", "source1", "p. 9", 4, ["tag2"]));
+
+        Assert.Equal("C9001", created.NotNull().GrampsId);
+        Assert.Equal("source1", created.SourceHandle);
+        Assert.Equal("p. 9", created.Page);
+        Assert.Equal(4, created.Confidence);
+        Assert.Equal(0, created.Date?.SortValue);
+        Assert.Equal(1, CountReferences(database, created.Handle, "source1", "Source"));
+        Assert.Equal(1, CountReferences(database, created.Handle, "tag2", "Tag"));
+    }
+
+    [Fact]
+    public async Task CreatesRejectDuplicateIdsUnknownSourcesAndDisabledWrites()
+    {
+        using var database = new TestDatabase();
+        var enabledService = CreateObjectWriteService(database, allowWrites: true);
+        var disabledService = CreateObjectWriteService(database, allowWrites: false);
+
+        var duplicateId = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            enabledService.CreateNoteAsync(new CreateNoteRequest("N0001", "Duplicate", null)));
+        var unknownSource = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            enabledService.CreateCitationAsync(new CreateCitationRequest("C9002", "missing", "", 2, null)));
+        var disabled = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            disabledService.CreateNoteAsync(new CreateNoteRequest("N9003", "Disabled", null)));
+
+        Assert.Contains("already exists", duplicateId.Message);
+        Assert.Contains("Unknown source", unknownSource.Message);
+        Assert.Contains("Writes are disabled", disabled.Message);
+    }
+
     private static MediaWriteService CreateMediaWriteService(TestDatabase database, bool allowWrites)
     {
         var config = new GrampsConfig(database.DirectoryPath, database.DatabasePath, null);
@@ -397,5 +459,25 @@ public sealed class WriteSafetyTests
         command.Parameters.AddWithValue("$jsonPath", jsonPath);
         command.Parameters.AddWithValue("$handle", handle);
         return command.ExecuteScalar() as string;
+    }
+
+    private static int CountReferences(TestDatabase database, string objectHandle, string referenceHandle,
+        string referenceClass)
+    {
+        using var connection =
+            new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = database.DatabasePath }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+                              SELECT COUNT(*)
+                              FROM reference
+                              WHERE obj_handle = $objectHandle
+                                AND ref_handle = $referenceHandle
+                                AND ref_class = $referenceClass
+                              """;
+        command.Parameters.AddWithValue("$objectHandle", objectHandle);
+        command.Parameters.AddWithValue("$referenceHandle", referenceHandle);
+        command.Parameters.AddWithValue("$referenceClass", referenceClass);
+        return Convert.ToInt32(command.ExecuteScalar());
     }
 }

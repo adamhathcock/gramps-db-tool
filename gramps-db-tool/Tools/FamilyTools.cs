@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using GrampsDbTool.Data;
 using GrampsDbTool.Models;
-using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 namespace GrampsDbTool.Tools;
@@ -10,13 +9,17 @@ namespace GrampsDbTool.Tools;
 public sealed class FamilyTools(GrampsRepository repository)
 {
     [McpServerTool(Name = "get_family", ReadOnly = true, Destructive = false, Idempotent = true)]
-    [Description("Get one Gramps family by handle or Gramps ID. Relationship fields are read-only.")]
-    public async Task<FamilyDto> GetFamily(
-        [Description("Gramps family handle. Required if grampsId is not supplied.")] string? handle = null,
-        [Description("User-visible Gramps family ID. Required if handle is not supplied.")] string? grampsId = null,
+    [Description(
+        "Get up to 100 Gramps families by handle or Gramps ID. Supply handles or grampsIds, not both. Existing results are returned in requested order and missing values are reported.")]
+    public async Task<LookupResultDto<FamilyDto>> GetFamily(
+        [Description("Gramps family handles. Required if grampsIds is not supplied.")]
+        IReadOnlyList<string>? handles = null,
+        [Description("User-visible Gramps family IDs. Required if handles is not supplied.")]
+        IReadOnlyList<string>? grampsIds = null,
         CancellationToken cancellationToken = default)
     {
-        var family = await repository.GetFamilyAsync(handle, grampsId, cancellationToken);
-        return family ?? throw new McpException("Family not found.");
+        var families = await repository.GetFamilyAsync(handles, grampsIds, cancellationToken);
+        return LookupResultDto<FamilyDto>.Create(families, handles, grampsIds, "grampsId",
+            static family => family.Handle, static family => family.GrampsId);
     }
 }

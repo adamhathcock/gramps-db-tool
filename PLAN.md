@@ -48,18 +48,27 @@ Core tools:
 
 ```text
 search_people
+list_objects
+find_backlinks
 get_person
 get_family
 get_event
 get_source
+get_place
 get_citation
 get_note
 get_media
-update_media_path
+get_repository
+list_tags
+get_tags
+find_objects_by_tag
+update_media
 create_note
 update_note
 create_citation
 update_citation
+update_event
+update_source
 ```
 
 ---
@@ -338,7 +347,7 @@ convert relative path to absolute
 Tool:
 
 ```text
-update_media_path
+update_media
 ```
 
 ---
@@ -420,20 +429,30 @@ GrampsMcp/
 
 ## 10. First Milestone
 
-Implement read-only tools first:
+Implemented read-only foundation:
 
 ```text
 search_people
+list_objects
+find_backlinks
 get_person
+get_family
+get_event
+get_source
+get_place
 get_media
 get_note
 get_citation
+get_repository
+list_tags
+get_tags
+find_objects_by_tag
 ```
 
-Then add writes in this order:
+Implemented standalone writes in this order:
 
 ```text
-update_media_path
+update_media
 create_note
 update_note
 create_citation

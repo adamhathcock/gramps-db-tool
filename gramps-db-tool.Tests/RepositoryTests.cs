@@ -1,6 +1,7 @@
 using GrampsDbTool.Configuration;
 using GrampsDbTool.Data;
 using GrampsDbTool.Services;
+using GrampsDbTool.Tools;
 
 namespace GrampsDbTool.Tests;
 
@@ -46,21 +47,27 @@ public sealed class RepositoryTests
         var sourceBatch = await repository.GetSourceAsync(["source1", "missing"]);
         var sourceBatchByGrampsId = await repository.GetSourceAsync(null, ["S0001", "missing"]);
 
-        Assert.Single(people);
-        Assert.Equal("Charles Babbage", Assert.Single(firstPage).DisplayName);
-        Assert.Equal("Ada Lovelace", Assert.Single(secondPage).DisplayName);
+        Assert.Single(people.Items);
+        Assert.Equal(1, people.TotalCount);
+        Assert.Equal("Charles Babbage", Assert.Single(firstPage.Items).DisplayName);
+        Assert.True(firstPage.HasMore);
+        Assert.Equal(1, firstPage.NextOffset);
+        Assert.Equal("Ada Lovelace", Assert.Single(secondPage.Items).DisplayName);
         Assert.Equal("Ada Lovelace", person?.DisplayName);
-        Assert.Equal("media1", Assert.Single(person!.MediaHandles));
-        Assert.Equal("person3", Assert.Single(family!.ChildHandles));
-        Assert.Equal("Birth", @event?.Type);
+        Assert.Equal("media1", Assert.Single(person!.Media).Handle);
+        Assert.Equal("person3", Assert.Single(family!.Children).Handle);
+        Assert.Equal("Birth", @event?.Type?.CustomName);
+        Assert.Equal(1815, @event?.Date?.Year);
         Assert.Equal("Register", source?.Title);
         Assert.Equal("London", Assert.Single(place).Title);
-        Assert.Equal("place2", Assert.Single(Assert.Single(place).ParentPlaceHandles));
-        Assert.Equal("City", Assert.Single(place).Type);
+        Assert.Equal("place2", Assert.Single(Assert.Single(place).ParentPlaces).Handle);
+        Assert.Equal(3, Assert.Single(Assert.Single(place).ParentPlaces).Date?.CustomNewYearMonth);
+        Assert.Equal(25, Assert.Single(Assert.Single(place).ParentPlaces).Date?.CustomNewYearDay);
+        Assert.Equal("City", Assert.Single(place).Type?.CustomName);
         Assert.Equal("-0.1276", Assert.Single(place).Longitude);
         Assert.Equal("51.5072", Assert.Single(place).Latitude);
         Assert.Equal("London", Assert.Single(place).PrimaryName);
-        Assert.Equal(["media1"], Assert.Single(place).MediaHandles);
+        Assert.Equal("media1", Assert.Single(Assert.Single(place).Media).Handle);
         Assert.Equal(["citation1"], Assert.Single(place).CitationHandles);
         Assert.Equal(["note1"], Assert.Single(place).NoteHandles);
         Assert.Equal(Path.Combine(database.MediaPath, "photos/ada.jpg"), media?.ResolvedPath);
@@ -74,19 +81,26 @@ public sealed class RepositoryTests
         Assert.Equal("note1", Assert.Single(noteBatch).Handle);
         Assert.Equal("note1", Assert.Single(noteBatchByGrampsId).Handle);
         Assert.Equal("source1", citation?.SourceHandle);
+        Assert.Equal(1843, citation?.Date?.Year);
         Assert.Equal("citation1", Assert.Single(citationBatch).Handle);
         Assert.Equal("citation1", Assert.Single(citationBatchByGrampsId).Handle);
         Assert.Equal("event1", Assert.Single(eventBatch).Handle);
         Assert.Equal("event1", Assert.Single(eventBatchByGrampsId).Handle);
         Assert.Equal("source1", Assert.Single(sourceBatch).Handle);
         Assert.Equal("source1", Assert.Single(sourceBatchByGrampsId).Handle);
-        Assert.Equal(["tag1"], person!.TagHandles);
-        Assert.Equal(["tag2"], family!.TagHandles);
+        Assert.Equal(["tag1"], person.TagHandles);
+        Assert.Equal(["tag2"], family.TagHandles);
         Assert.Equal(["tag1"], @event!.TagHandles);
         Assert.Equal(["tag2"], source!.TagHandles);
         Assert.Equal(["tag1", "tag2"], media!.TagHandles);
         Assert.Equal(["tag2"], note!.TagHandles);
         Assert.Equal(["tag1"], citation!.TagHandles);
+        Assert.True(person.Private);
+        Assert.Equal("Primary", Assert.Single(person.Events).Role?.CustomName);
+        Assert.Equal("person2", Assert.Single(person.PersonReferences).Handle);
+        Assert.Equal("media1", Assert.Single(family.Media).Handle);
+        Assert.Equal("repo1", Assert.Single(source.Repositories).Handle);
+        Assert.Equal("person1", Assert.Single(note.Links).Value);
     }
 
     [Fact]
@@ -101,7 +115,8 @@ public sealed class RepositoryTests
         var tagsByHandle = await repository.GetTagsAsync(["tag2", "missing", "tag1"]);
         var tagsByName = await repository.GetTagsAsync(null, ["Missing Media", "missing", "Needs Review"]);
 
-        Assert.Collection(tags,
+        Assert.Equal(2, tags.TotalCount);
+        Assert.Collection(tags.Items,
             tag => Assert.Equal("Needs Review", tag.Name),
             tag => Assert.Equal("Missing Media", tag.Name));
         Assert.Collection(tagsByHandle,
@@ -154,15 +169,74 @@ public sealed class RepositoryTests
         var taggedObjects = await repository.FindObjectsByTagAsync("tag1", null);
         var mediaOnly = await repository.FindObjectsByTagAsync(null, "Needs Review", ["media"]);
 
-        Assert.Contains(taggedObjects, item => item.ObjectType == "person" && item.Handle == "person1");
-        Assert.Contains(taggedObjects, item => item.ObjectType == "event" && item.Handle == "event1");
-        Assert.Contains(taggedObjects, item => item.ObjectType == "place" && item.Handle == "place1");
-        Assert.Contains(taggedObjects, item => item.ObjectType == "citation" && item.Handle == "citation1");
-        Assert.Contains(taggedObjects,
+        Assert.Contains(taggedObjects.Items, item => item.ObjectType == "person" && item.Handle == "person1");
+        Assert.Contains(taggedObjects.Items, item => item.ObjectType == "event" && item.Handle == "event1");
+        Assert.Contains(taggedObjects.Items, item => item.ObjectType == "place" && item.Handle == "place1");
+        Assert.Contains(taggedObjects.Items, item => item.ObjectType == "citation" && item.Handle == "citation1");
+        Assert.Contains(taggedObjects.Items,
             item => item.ObjectType == "media" && item.Handle == "media1" &&
                     item.TagHandles.SequenceEqual(["tag1", "tag2"]));
-        Assert.Single(mediaOnly);
-        Assert.Equal("media1", mediaOnly[0].Handle);
+        Assert.Single(mediaOnly.Items);
+        Assert.Equal("media1", mediaOnly.Items[0].Handle);
+    }
+
+    [Fact]
+    public async Task RepositoryListsEveryPrimaryObjectTypeWithPaging()
+    {
+        using var database = new TestDatabase();
+        var config = new GrampsConfig(database.DirectoryPath, database.DatabasePath, null);
+        var paths = await new GrampsMetadataReader(config).ReadDatabasePathsAsync();
+        var repository = new GrampsRepository(config, new MediaPathService(paths));
+
+        var firstPage = await repository.ListObjectsAsync(limit: 3);
+        var repositoryPage = await repository.ListObjectsAsync("Archive", ["repository"]);
+        var repositories = await repository.GetRepositoryAsync(["repo1"]);
+
+        Assert.Equal(14, firstPage.TotalCount);
+        Assert.Equal(3, firstPage.ReturnedCount);
+        Assert.True(firstPage.HasMore);
+        Assert.Equal(3, firstPage.NextOffset);
+        var repositorySummary = Assert.Single(repositoryPage.Items);
+        Assert.Equal("repository", repositorySummary.ObjectType);
+        Assert.Equal("repo1", repositorySummary.Handle);
+        var repositoryDto = Assert.Single(repositories);
+        Assert.Equal("Archive", repositoryDto.Name);
+        Assert.Equal("Archive", repositoryDto.Type?.CustomName);
+        Assert.Equal(["note1"], repositoryDto.NoteHandles);
+    }
+
+    [Fact]
+    public async Task RepositoryFindsPagedBacklinksAndAcceptsDuplicateFilters()
+    {
+        using var database = new TestDatabase();
+        var config = new GrampsConfig(database.DirectoryPath, database.DatabasePath, null);
+        var paths = await new GrampsMetadataReader(config).ReadDatabasePathsAsync();
+        var repository = new GrampsRepository(config, new MediaPathService(paths));
+
+        var backlinks = await repository.FindBacklinksAsync("media1", limit: 1);
+        var people = await repository.FindBacklinksAsync("media1", ["person", "person"]);
+
+        Assert.Equal(2, backlinks.TotalCount);
+        Assert.Single(backlinks.Items);
+        Assert.True(backlinks.HasMore);
+        var person = Assert.Single(people.Items);
+        Assert.Equal("person1", person.Handle);
+    }
+
+    [Fact]
+    public async Task BatchToolReportsMissingLookupValues()
+    {
+        using var database = new TestDatabase();
+        var config = new GrampsConfig(database.DirectoryPath, database.DatabasePath, null);
+        var paths = await new GrampsMetadataReader(config).ReadDatabasePathsAsync();
+        var repository = new GrampsRepository(config, new MediaPathService(paths));
+        var tools = new RepositoryTools(repository);
+
+        var result = await tools.GetRepository(["repo1", "missing"]);
+
+        Assert.Equal("handle", result.LookupBy);
+        Assert.Equal("repo1", Assert.Single(result.Items).Handle);
+        Assert.Equal(["missing"], result.MissingValues);
     }
 
     [Fact]
@@ -191,7 +265,7 @@ public sealed class RepositoryTests
             await Assert.ThrowsAsync<ArgumentException>(() => repository.GetMediaAsync(["media1"], ["O0001"]));
         var neitherException =
             await Assert.ThrowsAsync<ArgumentException>(() =>
-                repository.GetMediaAsync((IReadOnlyList<string>?)null, null));
+                repository.GetMediaAsync(null));
         var emptyException = await Assert.ThrowsAsync<ArgumentException>(() => repository.GetMediaAsync(null, [""]));
         var tooManyException = await Assert.ThrowsAsync<ArgumentException>(() =>
             repository.GetMediaAsync(null, Enumerable.Range(0, 101).Select(index => $"O{index:0000}").ToArray()));
@@ -241,7 +315,8 @@ public sealed class RepositoryTests
 
         var bothException =
             await Assert.ThrowsAsync<ArgumentException>(() => repository.GetTagsAsync(["tag1"], ["Needs Review"]));
-        var neitherException = await Assert.ThrowsAsync<ArgumentException>(() => repository.GetTagsAsync(null, null));
+        var neitherException = await Assert.ThrowsAsync<ArgumentException>(() =>
+            repository.GetTagsAsync(null));
         var emptyException = await Assert.ThrowsAsync<ArgumentException>(() => repository.GetTagsAsync(null, [""]));
         var tooManyException = await Assert.ThrowsAsync<ArgumentException>(() =>
             repository.GetTagsAsync(Enumerable.Range(0, 101).Select(index => $"tag{index}").ToArray()));
@@ -250,6 +325,21 @@ public sealed class RepositoryTests
         Assert.Contains("either", neitherException.Message);
         Assert.Contains("must not be empty", emptyException.Message);
         Assert.Contains("At most 100", tooManyException.Message);
+    }
+
+    [Fact]
+    public async Task RepositoryRejectsInvalidPagingArguments()
+    {
+        using var database = new TestDatabase();
+        var config = new GrampsConfig(database.DirectoryPath, database.DatabasePath, null);
+        var paths = await new GrampsMetadataReader(config).ReadDatabasePathsAsync();
+        var repository = new GrampsRepository(config, new MediaPathService(paths));
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => repository.ListObjectsAsync(limit: 0));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => repository.ListTagsAsync(offset: -1));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => repository.SearchPeopleAsync("", limit: 501));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            repository.FindBacklinksAsync("media1", offset: -1));
     }
 
     private static Task GetBatchAsync(GrampsRepository repository, string objectType, IReadOnlyList<string>? handles,

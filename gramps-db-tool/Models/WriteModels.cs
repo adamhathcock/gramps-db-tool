@@ -13,10 +13,24 @@ public sealed record UpdateNoteRequest(
     IReadOnlyList<string>? TagHandles
 );
 
+public sealed record CreateNoteRequest(
+    string GrampsId,
+    string Text,
+    IReadOnlyList<string>? TagHandles
+);
+
 public sealed record UpdateCitationRequest(
     string CitationHandle,
     string? Page,
     int? Confidence,
+    IReadOnlyList<string>? TagHandles
+);
+
+public sealed record CreateCitationRequest(
+    string GrampsId,
+    string SourceHandle,
+    string Page,
+    int Confidence,
     IReadOnlyList<string>? TagHandles
 );
 

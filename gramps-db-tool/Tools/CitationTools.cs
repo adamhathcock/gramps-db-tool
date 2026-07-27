@@ -8,10 +8,31 @@ namespace GrampsDbTool.Tools;
 [McpServerToolType]
 public sealed class CitationTools(GrampsRepository repository, ObjectWriteService objectWriteService)
 {
+    [McpServerTool(Name = "create_citation", ReadOnly = false, Destructive = false, Idempotent = false)]
+    [Description(
+        "Create a standalone Gramps citation linked to an existing source, using a caller-supplied unique Gramps ID. Requires runtime write enablement and creates a database-derived backup before mutation.")]
+    public Task<CitationDto?> CreateCitation(
+        [Description(
+            "Unique user-visible Gramps citation ID. The server does not guess the user's configured Gramps ID prefix.")]
+        string grampsId,
+        [Description("Existing Gramps source handle.")]
+        string sourceHandle,
+        [Description("Citation page or reference text.")]
+        string page = "",
+        [Description("Citation confidence from 0 (very low) to 4 (very high).")]
+        int confidence = 2,
+        [Description("Optional complete tag handle list for the new citation.")]
+        IReadOnlyList<string>? tagHandles = null,
+        CancellationToken cancellationToken = default)
+    {
+        return objectWriteService.CreateCitationAsync(
+            new CreateCitationRequest(grampsId, sourceHandle, page, confidence, tagHandles), cancellationToken);
+    }
+
     [McpServerTool(Name = "get_citation", ReadOnly = true, Destructive = false, Idempotent = true)]
     [Description(
-        "Get up to 100 Gramps citations by handle or Gramps ID. Supply handles or grampsIds, not both. Existing results are returned in requested order. Citations are read-only in this milestone.")]
-    public Task<IReadOnlyList<CitationDto>> GetCitation(
+        "Get up to 100 Gramps citations by handle or Gramps ID. Supply handles or grampsIds, not both. Existing results are returned in requested order and missing values are reported.")]
+    public async Task<LookupResultDto<CitationDto>> GetCitation(
         [Description(
             "Gramps citation handles to fetch. Required if grampsIds is not supplied. At least 1 and at most 100 handles are allowed.")]
         IReadOnlyList<string>? handles = null,
@@ -20,7 +41,9 @@ public sealed class CitationTools(GrampsRepository repository, ObjectWriteServic
         IReadOnlyList<string>? grampsIds = null,
         CancellationToken cancellationToken = default)
     {
-        return repository.GetCitationAsync(handles, grampsIds, cancellationToken);
+        var citations = await repository.GetCitationAsync(handles, grampsIds, cancellationToken);
+        return LookupResultDto<CitationDto>.Create(citations, handles, grampsIds, "grampsId",
+            static item => item.Handle, static item => item.GrampsId);
     }
 
     [McpServerTool(Name = "update_citation", ReadOnly = false, Destructive = false, Idempotent = false)]

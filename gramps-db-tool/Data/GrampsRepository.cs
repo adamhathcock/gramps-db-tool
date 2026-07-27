@@ -8,17 +8,32 @@ namespace GrampsDbTool.Data;
 
 public sealed class GrampsRepository(GrampsConfig config, IMediaPathService mediaPathService)
 {
-    public async Task<IReadOnlyList<PersonSearchResultDto>> SearchPeopleAsync(string query, int limit = 20,
+    public async Task<PageDto<PersonSearchResultDto>> SearchPeopleAsync(string query, int limit = 20,
         int offset = 0, CancellationToken cancellationToken = default)
     {
-        query = (query ?? string.Empty).Trim();
-        limit = Math.Clamp(limit, 1, 100);
-        offset = Math.Max(offset, 0);
+        query = query.Trim();
+        ValidatePaging(limit, offset);
 
         await using var connection = new SqliteConnection(CreateConnectionString());
         await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await using var countCommand = connection.CreateCommand();
+        countCommand.Transaction = (SqliteTransaction)transaction;
+        countCommand.CommandText = """
+                                   SELECT COUNT(*)
+                                   FROM person
+                                   WHERE $query = ''
+                                      OR given_name LIKE $like
+                                      OR surname LIKE $like
+                                      OR gramps_id LIKE $like
+                                   """;
+        countCommand.Parameters.AddWithValue("$query", query);
+        countCommand.Parameters.AddWithValue("$like", $"%{query}%");
+        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
 
         await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
         command.CommandText = """
                               SELECT json_data
                               FROM person
@@ -26,13 +41,13 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
                                  OR given_name LIKE $like
                                  OR surname LIKE $like
                                  OR gramps_id LIKE $like
-                              ORDER BY surname, given_name, gramps_id
+                              ORDER BY surname, given_name, gramps_id, handle
                               LIMIT $limit
                               OFFSET $offset
                               """;
         command.Parameters.AddWithValue("$query", query);
         command.Parameters.AddWithValue("$like", $"%{query}%");
-        command.Parameters.AddWithValue("$limit", limit);
+        command.Parameters.AddWithValue("$limit", limit + 1);
         command.Parameters.AddWithValue("$offset", offset);
 
         var people = new List<PersonSearchResultDto>();
@@ -45,10 +60,134 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
                 RequiredString(person, "handle"),
                 JsonMapping.String(person, "gramps_id"),
                 JsonMapping.DisplayName(person),
-                JsonMapping.Int(person, "gender")));
+                JsonMapping.Int(person, "gender"),
+                JsonMapping.Long(person, "change"),
+                JsonMapping.Bool(person, "private")));
         }
 
-        return people;
+        return CreatePage(people, limit, offset, totalCount);
+    }
+
+    public async Task<PageDto<ObjectSummaryDto>> ListObjectsAsync(string query = "",
+        IReadOnlyList<string>? objectTypes = null, int limit = 100, int offset = 0,
+        CancellationToken cancellationToken = default)
+    {
+        query = query.Trim();
+        ValidatePaging(limit, offset);
+        var tables = ResolveObjectTables(objectTypes);
+        if (tables.Length == 0)
+        {
+            return new PageDto<ObjectSummaryDto>([], limit, offset, 0, 0, false, null);
+        }
+
+        await using var connection = new SqliteConnection(CreateConnectionString());
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        var unionSql = BuildObjectUnionSql(tables);
+        var filterSql = """
+                        WHERE $query = ''
+                           OR handle LIKE $like
+                           OR COALESCE(gramps_id, '') LIKE $like
+                           OR COALESCE(label, '') LIKE $like
+                        """;
+
+        await using var countCommand = connection.CreateCommand();
+        countCommand.Transaction = (SqliteTransaction)transaction;
+        countCommand.CommandText = $"SELECT COUNT(*) FROM ({unionSql}) {filterSql}";
+        AddSearchParameters(countCommand, query);
+        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText = $"""
+                               SELECT object_type, handle, gramps_id, label, change, private
+                               FROM ({unionSql})
+                               {filterSql}
+                               ORDER BY object_type, label COLLATE NOCASE, gramps_id, handle
+                               LIMIT $limit OFFSET $offset
+                               """;
+        AddSearchParameters(command, query);
+        command.Parameters.AddWithValue("$limit", limit + 1);
+        command.Parameters.AddWithValue("$offset", offset);
+
+        var objects = new List<ObjectSummaryDto>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            objects.Add(new ObjectSummaryDto(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.IsDBNull(3) || string.IsNullOrWhiteSpace(reader.GetString(3))
+                    ? reader.GetString(1)
+                    : reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetInt64(4),
+                reader.IsDBNull(5) ? null : reader.GetInt64(5) != 0));
+        }
+
+        return CreatePage(objects, limit, offset, totalCount);
+    }
+
+    public async Task<PageDto<BacklinkDto>> FindBacklinksAsync(string handle,
+        IReadOnlyList<string>? objectTypes = null, int limit = 100, int offset = 0,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(handle))
+        {
+            throw new ArgumentException("Referenced handle is required.");
+        }
+
+        ValidatePaging(limit, offset);
+        var tables = ResolveObjectTables(objectTypes);
+        if (tables.Length == 0)
+        {
+            return new PageDto<BacklinkDto>([], limit, offset, 0, 0, false, null);
+        }
+
+        await using var connection = new SqliteConnection(CreateConnectionString());
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var unionSql = BuildObjectUnionSql(tables);
+        var sourceSql = $"""
+                         SELECT DISTINCT summary.object_type, summary.handle, summary.gramps_id, summary.label
+                         FROM reference
+                         JOIN ({unionSql}) AS summary
+                           ON summary.object_type = lower(reference.obj_class)
+                          AND summary.handle = reference.obj_handle
+                         WHERE reference.ref_handle = $handle
+                         """;
+
+        await using var countCommand = connection.CreateCommand();
+        countCommand.Transaction = (SqliteTransaction)transaction;
+        countCommand.CommandText = $"SELECT COUNT(*) FROM ({sourceSql})";
+        countCommand.Parameters.AddWithValue("$handle", handle);
+        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText = $"""
+                               SELECT object_type, handle, gramps_id, label
+                               FROM ({sourceSql})
+                               ORDER BY object_type, label COLLATE NOCASE, gramps_id, handle
+                               LIMIT $limit OFFSET $offset
+                               """;
+        command.Parameters.AddWithValue("$handle", handle);
+        command.Parameters.AddWithValue("$limit", limit + 1);
+        command.Parameters.AddWithValue("$offset", offset);
+
+        var backlinks = new List<BacklinkDto>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            backlinks.Add(new BacklinkDto(reader.GetString(0), reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.IsDBNull(3) || string.IsNullOrWhiteSpace(reader.GetString(3))
+                    ? reader.GetString(1)
+                    : reader.GetString(3)));
+        }
+
+        return CreatePage(backlinks, limit, offset, totalCount);
     }
 
     public async Task<PersonDto?> GetPersonAsync(string? handle, string? grampsId,
@@ -67,13 +206,18 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.String(root, "gramps_id"),
             JsonMapping.DisplayName(root),
             JsonMapping.Int(root, "gender"),
-            JsonMapping.RefArray(root, "event_ref_list"),
+            JsonMapping.Int(root, "birth_ref_index"),
+            JsonMapping.Int(root, "death_ref_index"),
+            JsonMapping.EventRefArray(root, "event_ref_list"),
             JsonMapping.StringArray(root, "family_list"),
             JsonMapping.StringArray(root, "parent_family_list"),
-            JsonMapping.RefArray(root, "media_list"),
+            JsonMapping.MediaRefArray(root, "media_list"),
             JsonMapping.StringArray(root, "note_list"),
             JsonMapping.StringArray(root, "citation_list"),
-            JsonMapping.StringArray(root, "tag_list"));
+            JsonMapping.StringArray(root, "tag_list"),
+            JsonMapping.PersonRefArray(root, "person_ref_list"),
+            JsonMapping.Long(root, "change"),
+            JsonMapping.Bool(root, "private"));
     }
 
     public async Task<IReadOnlyList<MediaDto>> GetMediaAsync(IReadOnlyList<string>? handles,
@@ -108,9 +252,12 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.String(root, "mime"),
             JsonMapping.String(root, "desc"),
             JsonMapping.String(root, "checksum"),
+            JsonMapping.Date(root, "date"),
             JsonMapping.StringArray(root, "note_list"),
             JsonMapping.StringArray(root, "citation_list"),
-            JsonMapping.StringArray(root, "tag_list"));
+            JsonMapping.StringArray(root, "tag_list"),
+            JsonMapping.Long(root, "change"),
+            JsonMapping.Bool(root, "private"));
     }
 
     public async Task<NoteDto?> GetNoteAsync(string? handle, string? grampsId,
@@ -142,12 +289,18 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
     public async Task<FamilyDto?> GetFamilyAsync(string? handle, string? grampsId,
         CancellationToken cancellationToken = default)
     {
-        var family = await GetObjectAsync("family", handle, grampsId, cancellationToken);
-        if (family is null)
-        {
-            return null;
-        }
+        var families = await GetFamilyAsync(ToLookupList(handle), ToLookupList(grampsId), cancellationToken);
+        return families.FirstOrDefault();
+    }
 
+    public async Task<IReadOnlyList<FamilyDto>> GetFamilyAsync(IReadOnlyList<string>? handles,
+        IReadOnlyList<string>? grampsIds = null, CancellationToken cancellationToken = default)
+    {
+        return await GetObjectsAsync("family", "family", handles, grampsIds, MapFamily, cancellationToken);
+    }
+
+    private static FamilyDto MapFamily(string family)
+    {
         using var document = JsonDocument.Parse(family);
         var root = document.RootElement;
         return new FamilyDto(
@@ -155,12 +308,15 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.String(root, "gramps_id"),
             JsonMapping.String(root, "father_handle"),
             JsonMapping.String(root, "mother_handle"),
-            JsonMapping.GrampsTypeName(root, "type"),
-            JsonMapping.ChildRefArray(root, "child_ref_list"),
-            JsonMapping.RefArray(root, "event_ref_list"),
+            JsonMapping.GrampsType(root, "type"),
+            JsonMapping.StructuredChildRefArray(root, "child_ref_list"),
+            JsonMapping.EventRefArray(root, "event_ref_list"),
+            JsonMapping.MediaRefArray(root, "media_list"),
             JsonMapping.StringArray(root, "note_list"),
             JsonMapping.StringArray(root, "citation_list"),
-            JsonMapping.StringArray(root, "tag_list"));
+            JsonMapping.StringArray(root, "tag_list"),
+            JsonMapping.Long(root, "change"),
+            JsonMapping.Bool(root, "private"));
     }
 
     public async Task<EventDto?> GetEventAsync(string? handle, string? grampsId,
@@ -195,13 +351,38 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
         return await GetObjectsAsync("place", "place", handles, grampsIds, MapPlace, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<TagDto>> ListTagsAsync(CancellationToken cancellationToken = default)
+    public async Task<RepositoryDto?> GetRepositoryAsync(string? handle, string? grampsId,
+        CancellationToken cancellationToken = default)
     {
+        var repositories = await GetRepositoryAsync(ToLookupList(handle), ToLookupList(grampsId), cancellationToken);
+        return repositories.FirstOrDefault();
+    }
+
+    public async Task<IReadOnlyList<RepositoryDto>> GetRepositoryAsync(IReadOnlyList<string>? handles,
+        IReadOnlyList<string>? grampsIds = null, CancellationToken cancellationToken = default)
+    {
+        return await GetObjectsAsync("repository", "repository", handles, grampsIds, MapRepository,
+            cancellationToken);
+    }
+
+    public async Task<PageDto<TagDto>> ListTagsAsync(int limit = 100, int offset = 0,
+        CancellationToken cancellationToken = default)
+    {
+        ValidatePaging(limit, offset);
         await using var connection = new SqliteConnection(CreateConnectionString());
         await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await using var countCommand = connection.CreateCommand();
+        countCommand.Transaction = (SqliteTransaction)transaction;
+        countCommand.CommandText = "SELECT COUNT(*) FROM tag";
+        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
 
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT json_data FROM tag ORDER BY priority, name";
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText = "SELECT json_data FROM tag ORDER BY priority, name, handle LIMIT $limit OFFSET $offset";
+        command.Parameters.AddWithValue("$limit", limit + 1);
+        command.Parameters.AddWithValue("$offset", offset);
 
         var tags = new List<TagDto>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -210,7 +391,7 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             tags.Add(MapTag(reader.GetString(0)));
         }
 
-        return tags;
+        return CreatePage(tags, limit, offset, totalCount);
     }
 
     public async Task<IReadOnlyList<TagDto>> GetTagsAsync(IReadOnlyList<string>? handles,
@@ -275,7 +456,7 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
         return tags;
     }
 
-    public async Task<IReadOnlyList<TaggedObjectDto>> FindObjectsByTagAsync(
+    public async Task<PageDto<TaggedObjectDto>> FindObjectsByTagAsync(
         string? tagHandle,
         string? tagName,
         IReadOnlyList<string>? objectTypes = null,
@@ -288,43 +469,37 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             throw new ArgumentException("Supply either tagHandle or tagName, but not both.");
         }
 
-        limit = Math.Clamp(limit, 1, 500);
-        offset = Math.Max(offset, 0);
+        ValidatePaging(limit, offset);
 
         await using var connection = new SqliteConnection(CreateConnectionString());
         await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
         var resolvedTagHandle = string.IsNullOrWhiteSpace(tagHandle)
-            ? await ReadTagHandleByNameAsync(connection, tagName!, cancellationToken)
+            ? await ReadTagHandleByNameAsync(connection, transaction, tagName!, cancellationToken)
             : tagHandle;
         if (string.IsNullOrWhiteSpace(resolvedTagHandle))
         {
-            return [];
+            return new PageDto<TaggedObjectDto>([], limit, offset, 0, 0, false, null);
         }
 
-        var tables = TaggedObjectTables;
-        if (objectTypes is not null)
+        ObjectTable[] tables;
+        if (objectTypes is null)
         {
-            var requestedTypes = objectTypes.Where(static value => !string.IsNullOrWhiteSpace(value))
-                .Select(static value => value.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (requestedTypes.Count != objectTypes.Count)
+            tables = TaggedObjectTables;
+        }
+        else
+        {
+            tables = ResolveObjectTables(objectTypes);
+            if (tables.Any(static table => table.ObjectType == "tag"))
             {
-                throw new ArgumentException("Object types must not be empty.");
+                throw new ArgumentException("Unsupported tagged object type: tag.");
             }
-
-            var unknownTypes = requestedTypes.Except(TaggedObjectTables.Select(static table => table.ObjectType),
-                StringComparer.OrdinalIgnoreCase).ToArray();
-            if (unknownTypes.Length > 0)
-            {
-                throw new ArgumentException($"Unsupported tagged object type: {string.Join(", ", unknownTypes)}.");
-            }
-
-            tables = TaggedObjectTables.Where(table => requestedTypes.Contains(table.ObjectType)).ToArray();
         }
 
         if (tables.Length == 0)
         {
-            return [];
+            return new PageDto<TaggedObjectDto>([], limit, offset, 0, 0, false, null);
         }
 
         var unionSql = string.Join(" UNION ALL ", tables.Select(static table => $"""
@@ -337,7 +512,14 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
              WHERE EXISTS (SELECT 1 FROM json_each(json_data, '$.tag_list') WHERE value = $tagHandle)
              """));
 
+        await using var countCommand = connection.CreateCommand();
+        countCommand.Transaction = (SqliteTransaction)transaction;
+        countCommand.CommandText = $"SELECT COUNT(*) FROM ({unionSql})";
+        countCommand.Parameters.AddWithValue("$tagHandle", resolvedTagHandle);
+        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
+
         await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
         command.CommandText = $"""
                                SELECT object_type, handle, gramps_id, label, json_data
                                FROM ({unionSql})
@@ -345,7 +527,7 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
                                LIMIT $limit OFFSET $offset
                                """;
         command.Parameters.AddWithValue("$tagHandle", resolvedTagHandle);
-        command.Parameters.AddWithValue("$limit", limit);
+        command.Parameters.AddWithValue("$limit", limit + 1);
         command.Parameters.AddWithValue("$offset", offset);
 
         var objects = new List<TaggedObjectDto>();
@@ -360,18 +542,20 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
                 reader.IsDBNull(3) || string.IsNullOrWhiteSpace(reader.GetString(3))
                     ? reader.GetString(1)
                     : reader.GetString(3),
-                JsonMapping.StringArray(document.RootElement, "tag_list")));
+                JsonMapping.StringArray(document.RootElement, "tag_list"),
+                JsonMapping.Long(document.RootElement, "change"),
+                JsonMapping.Bool(document.RootElement, "private")));
         }
 
-        return objects;
+        return CreatePage(objects, limit, offset, totalCount);
     }
 
     private async Task<string?> GetObjectAsync(string tableName, string? handle, string? grampsId,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(handle) && string.IsNullOrWhiteSpace(grampsId))
+        if (string.IsNullOrWhiteSpace(handle) == string.IsNullOrWhiteSpace(grampsId))
         {
-            throw new ArgumentException("Either handle or grampsId is required.");
+            throw new ArgumentException("Supply either handle or grampsId, but not both.");
         }
 
         await using var connection = new SqliteConnection(CreateConnectionString());
@@ -481,8 +665,11 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.String(root, "gramps_id"),
             JsonMapping.NoteText(root),
             JsonMapping.Int(root, "format"),
-            JsonMapping.GrampsTypeName(root, "type"),
-            JsonMapping.StringArray(root, "tag_list"));
+            JsonMapping.GrampsType(root, "type"),
+            JsonMapping.NoteLinks(root),
+            JsonMapping.StringArray(root, "tag_list"),
+            JsonMapping.Long(root, "change"),
+            JsonMapping.Bool(root, "private"));
     }
 
     private static CitationDto MapCitation(string citation)
@@ -492,12 +679,15 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
         return new CitationDto(
             RequiredString(root, "handle"),
             JsonMapping.String(root, "gramps_id"),
+            JsonMapping.Date(root, "date"),
             JsonMapping.String(root, "page"),
             JsonMapping.Int(root, "confidence"),
             JsonMapping.String(root, "source_handle"),
             JsonMapping.StringArray(root, "note_list"),
-            JsonMapping.RefArray(root, "media_list"),
-            JsonMapping.StringArray(root, "tag_list"));
+            JsonMapping.MediaRefArray(root, "media_list"),
+            JsonMapping.StringArray(root, "tag_list"),
+            JsonMapping.Long(root, "change"),
+            JsonMapping.Bool(root, "private"));
     }
 
     private static EventDto MapEvent(string @event)
@@ -507,13 +697,16 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
         return new EventDto(
             RequiredString(root, "handle"),
             JsonMapping.String(root, "gramps_id"),
-            JsonMapping.GrampsTypeName(root, "type"),
+            JsonMapping.GrampsType(root, "type"),
+            JsonMapping.Date(root, "date"),
             JsonMapping.String(root, "description"),
             JsonMapping.String(root, "place"),
             JsonMapping.StringArray(root, "note_list"),
             JsonMapping.StringArray(root, "citation_list"),
-            JsonMapping.RefArray(root, "media_list"),
-            JsonMapping.StringArray(root, "tag_list"));
+            JsonMapping.MediaRefArray(root, "media_list"),
+            JsonMapping.StringArray(root, "tag_list"),
+            JsonMapping.Long(root, "change"),
+            JsonMapping.Bool(root, "private"));
     }
 
     private static SourceDto MapSource(string source)
@@ -528,8 +721,11 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.String(root, "pubinfo"),
             JsonMapping.String(root, "abbrev"),
             JsonMapping.StringArray(root, "note_list"),
-            JsonMapping.RefArray(root, "media_list"),
-            JsonMapping.StringArray(root, "tag_list"));
+            JsonMapping.MediaRefArray(root, "media_list"),
+            JsonMapping.RepositoryRefArray(root, "reporef_list"),
+            JsonMapping.StringArray(root, "tag_list"),
+            JsonMapping.Long(root, "change"),
+            JsonMapping.Bool(root, "private"));
     }
 
     private static PlaceDto MapPlace(string place)
@@ -547,12 +743,29 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.String(root, "long"),
             JsonMapping.String(root, "lat"),
             primaryName,
-            JsonMapping.GrampsTypeName(root, "place_type"),
-            JsonMapping.RefArray(root, "placeref_list"),
-            JsonMapping.RefArray(root, "media_list"),
+            JsonMapping.GrampsType(root, "place_type"),
+            JsonMapping.PlaceRefArray(root, "placeref_list"),
+            JsonMapping.MediaRefArray(root, "media_list"),
             JsonMapping.StringArray(root, "citation_list"),
             JsonMapping.StringArray(root, "note_list"),
-            JsonMapping.StringArray(root, "tag_list"));
+            JsonMapping.StringArray(root, "tag_list"),
+            JsonMapping.Long(root, "change"),
+            JsonMapping.Bool(root, "private"));
+    }
+
+    private static RepositoryDto MapRepository(string repository)
+    {
+        using var document = JsonDocument.Parse(repository);
+        var root = document.RootElement;
+        return new RepositoryDto(
+            RequiredString(root, "handle"),
+            JsonMapping.String(root, "gramps_id"),
+            JsonMapping.GrampsType(root, "type"),
+            JsonMapping.String(root, "name"),
+            JsonMapping.StringArray(root, "note_list"),
+            JsonMapping.StringArray(root, "tag_list"),
+            JsonMapping.Long(root, "change"),
+            JsonMapping.Bool(root, "private"));
     }
 
     private static TagDto MapTag(string tag)
@@ -567,10 +780,11 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
             JsonMapping.Long(root, "change"));
     }
 
-    private static async Task<string?> ReadTagHandleByNameAsync(SqliteConnection connection, string tagName,
-        CancellationToken cancellationToken)
+    private static async Task<string?> ReadTagHandleByNameAsync(SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction, string tagName, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
         command.CommandText = "SELECT handle FROM tag WHERE name = $name LIMIT 1";
         command.Parameters.AddWithValue("$name", tagName);
 
@@ -578,24 +792,100 @@ public sealed class GrampsRepository(GrampsConfig config, IMediaPathService medi
         return result as string;
     }
 
-    private static readonly TaggedObjectTable[] TaggedObjectTables =
+    private static PageDto<T> CreatePage<T>(List<T> items, int limit, int offset, int totalCount)
+    {
+        var hasMore = items.Count > limit;
+        if (hasMore)
+        {
+            items.RemoveAt(items.Count - 1);
+        }
+
+        return new PageDto<T>(items, limit, offset, items.Count, totalCount, hasMore,
+            hasMore ? offset + items.Count : null);
+    }
+
+    private static void ValidatePaging(int limit, int offset)
+    {
+        if (limit is < 1 or > 500)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit), "Limit must be from 1 to 500.");
+        }
+
+        if (offset < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset), "Offset must not be negative.");
+        }
+    }
+
+    private static ObjectTable[] ResolveObjectTables(IReadOnlyList<string>? objectTypes)
+    {
+        if (objectTypes is null)
+        {
+            return ObjectTables;
+        }
+
+        if (objectTypes.Any(static value => string.IsNullOrWhiteSpace(value)))
+        {
+            throw new ArgumentException("Object types must not be empty.");
+        }
+
+        var requestedTypes = objectTypes.Select(static value => value.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var unknownTypes = requestedTypes.Except(ObjectTables.Select(static table => table.ObjectType),
+            StringComparer.OrdinalIgnoreCase).ToArray();
+        if (unknownTypes.Length > 0)
+        {
+            throw new ArgumentException($"Unsupported object type: {string.Join(", ", unknownTypes)}.");
+        }
+
+        return ObjectTables.Where(table => requestedTypes.Contains(table.ObjectType)).ToArray();
+    }
+
+    private static string BuildObjectUnionSql(IEnumerable<ObjectTable> tables)
+    {
+        return string.Join(" UNION ALL ", tables.Select(static table => $"""
+                                                                         SELECT '{table.ObjectType}' AS object_type,
+                                                                                handle,
+                                                                                {table.GrampsIdExpression} AS gramps_id,
+                                                                                {table.LabelExpression} AS label,
+                                                                                {table.ChangeExpression} AS change,
+                                                                                {table.PrivateExpression} AS private
+                                                                         FROM {table.TableName}
+                                                                         """));
+    }
+
+    private static void AddSearchParameters(SqliteCommand command, string query)
+    {
+        command.Parameters.AddWithValue("$query", query);
+        command.Parameters.AddWithValue("$like", $"%{query}%");
+    }
+
+    private static readonly ObjectTable[] ObjectTables =
     [
-        new("person", "person", "gramps_id", "trim(COALESCE(given_name, '') || ' ' || COALESCE(surname, ''))"),
-        new("family", "family", "gramps_id", "COALESCE(gramps_id, handle)"),
-        new("event", "event", "gramps_id", "COALESCE(description, gramps_id, handle)"),
-        new("place", "place", "gramps_id", "COALESCE(title, gramps_id, handle)"),
-        new("source", "source", "gramps_id", "COALESCE(title, gramps_id, handle)"),
-        new("citation", "citation", "gramps_id", "COALESCE(page, gramps_id, handle)"),
-        new("media", "media", "gramps_id", "COALESCE(desc, path, gramps_id, handle)"),
-        new("repository", "repository", "gramps_id", "COALESCE(name, gramps_id, handle)"),
-        new("note", "note", "gramps_id", "COALESCE(gramps_id, handle)")
+        new("person", "person", "gramps_id", "trim(COALESCE(given_name, '') || ' ' || COALESCE(surname, ''))", "change",
+            "private"),
+        new("family", "family", "gramps_id", "COALESCE(gramps_id, handle)", "change", "private"),
+        new("event", "event", "gramps_id", "COALESCE(description, gramps_id, handle)", "change", "private"),
+        new("place", "place", "gramps_id", "COALESCE(title, gramps_id, handle)", "change", "private"),
+        new("source", "source", "gramps_id", "COALESCE(title, gramps_id, handle)", "change", "private"),
+        new("citation", "citation", "gramps_id", "COALESCE(page, gramps_id, handle)", "change", "private"),
+        new("media", "media", "gramps_id", "COALESCE(desc, path, gramps_id, handle)", "change", "private"),
+        new("repository", "repository", "gramps_id", "COALESCE(name, gramps_id, handle)", "change", "private"),
+        new("note", "note", "gramps_id", "COALESCE(json_extract(json_data, '$.text.string'), gramps_id, handle)",
+            "change", "private"),
+        new("tag", "tag", "NULL", "COALESCE(name, handle)", "change", "NULL")
     ];
 
-    private sealed record TaggedObjectTable(
+    private static readonly ObjectTable[] TaggedObjectTables =
+        ObjectTables.Where(static table => table.ObjectType != "tag").ToArray();
+
+    private sealed record ObjectTable(
         string ObjectType,
         string TableName,
         string GrampsIdExpression,
-        string LabelExpression);
+        string LabelExpression,
+        string ChangeExpression,
+        string PrivateExpression);
 
     private string CreateConnectionString()
     {

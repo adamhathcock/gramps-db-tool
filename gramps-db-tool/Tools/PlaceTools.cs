@@ -10,8 +10,8 @@ public sealed class PlaceTools(GrampsRepository repository)
 {
     [McpServerTool(Name = "get_place", ReadOnly = true, Destructive = false, Idempotent = true)]
     [Description(
-        "Get up to 100 Gramps places by handle or Gramps ID. Supply handles or grampsIds, not both. Existing results are returned in requested order. Place hierarchy, location, and all place fields are read-only.")]
-    public Task<IReadOnlyList<PlaceDto>> GetPlace(
+        "Get up to 100 Gramps places by handle or Gramps ID. Supply handles or grampsIds, not both. Existing results are returned in requested order and missing values are reported. Place hierarchy, location, and all place fields are read-only.")]
+    public async Task<LookupResultDto<PlaceDto>> GetPlace(
         [Description(
             "Gramps place handles to fetch. Required if grampsIds is not supplied. At least 1 and at most 100 handles are allowed.")]
         IReadOnlyList<string>? handles = null,
@@ -20,6 +20,8 @@ public sealed class PlaceTools(GrampsRepository repository)
         IReadOnlyList<string>? grampsIds = null,
         CancellationToken cancellationToken = default)
     {
-        return repository.GetPlaceAsync(handles, grampsIds, cancellationToken);
+        var places = await repository.GetPlaceAsync(handles, grampsIds, cancellationToken);
+        return LookupResultDto<PlaceDto>.Create(places, handles, grampsIds, "grampsId",
+            static item => item.Handle, static item => item.GrampsId);
     }
 }

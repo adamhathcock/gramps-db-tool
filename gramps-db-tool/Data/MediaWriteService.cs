@@ -15,7 +15,8 @@ public sealed class MediaWriteService(
     GrampsRepository repository,
     IMediaPathService mediaPathService)
 {
-    public async Task<MediaDto?> UpdateMediaAsync(UpdateMediaRequest request, CancellationToken cancellationToken = default)
+    public async Task<MediaDto?> UpdateMediaAsync(UpdateMediaRequest request,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.MediaHandle))
         {
@@ -52,15 +53,16 @@ public sealed class MediaWriteService(
 
         var media = await ReadMediaAsync(connection, transaction, request.MediaHandle, cancellationToken);
         var storedPath = request.NewPath is null ? media.Path : NormalizeStoredPath(request);
-        var afterJson = UpdateMediaJson(media.Json, storedPath, request.NewPath is not null, request.TagHandles, change);
+        var afterJson =
+            UpdateMediaJson(media.Json, storedPath, request.NewPath is not null, request.TagHandles, change);
 
         await using var command = connection.CreateCommand();
         command.Transaction = (SqliteTransaction)transaction;
         command.CommandText = """
-            UPDATE media
-            SET json_data = $json, path = $path, change = $change
-            WHERE handle = $handle
-            """;
+                              UPDATE media
+                              SET json_data = $json, path = $path, change = $change
+                              WHERE handle = $handle
+                              """;
         command.Parameters.AddWithValue("$json", afterJson);
         command.Parameters.AddWithValue("$path", (object?)storedPath ?? DBNull.Value);
         command.Parameters.AddWithValue("$change", change);
@@ -69,7 +71,14 @@ public sealed class MediaWriteService(
         var rowsAffected = await command.ExecuteNonQueryAsync(cancellationToken);
         if (rowsAffected != 1)
         {
-            throw new InvalidOperationException("Media path update failed because the target row was not updated exactly once.");
+            throw new InvalidOperationException(
+                "Media path update failed because the target row was not updated exactly once.");
+        }
+
+        if (request.TagHandles is not null)
+        {
+            await ReplaceTagReferencesAsync(connection, transaction, request.MediaHandle, request.TagHandles,
+                cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);
@@ -92,7 +101,8 @@ public sealed class MediaWriteService(
         return newPath;
     }
 
-    private static async Task<MediaRecord> ReadMediaAsync(SqliteConnection connection, System.Data.Common.DbTransaction transaction, string mediaHandle, CancellationToken cancellationToken)
+    private static async Task<MediaRecord> ReadMediaAsync(SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction, string mediaHandle, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = (SqliteTransaction)transaction;
@@ -100,7 +110,8 @@ public sealed class MediaWriteService(
         command.Parameters.AddWithValue("$handle", mediaHandle);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken) || reader.GetValue(0) is not string json || string.IsNullOrWhiteSpace(json))
+        if (!await reader.ReadAsync(cancellationToken) || reader.GetValue(0) is not string json ||
+            string.IsNullOrWhiteSpace(json))
         {
             throw new InvalidOperationException("Media object not found or does not contain JSON data.");
         }
@@ -108,10 +119,11 @@ public sealed class MediaWriteService(
         return new MediaRecord(json, reader.IsDBNull(1) ? null : reader.GetString(1));
     }
 
-    private static string UpdateMediaJson(string beforeJson, string? storedPath, bool updatePath, IReadOnlyList<string>? tagHandles, long change)
+    private static string UpdateMediaJson(string beforeJson, string? storedPath, bool updatePath,
+        IReadOnlyList<string>? tagHandles, long change)
     {
         var node = JsonNode.Parse(beforeJson)?.AsObject()
-            ?? throw new InvalidOperationException("Media JSON data is not an object.");
+                   ?? throw new InvalidOperationException("Media JSON data is not an object.");
 
         if (updatePath)
         {
@@ -146,14 +158,17 @@ public sealed class MediaWriteService(
             throw new ArgumentException("Tag handles must not be empty.");
         }
 
-        var duplicate = tagHandles.GroupBy(static handle => handle, StringComparer.Ordinal).FirstOrDefault(static group => group.Count() > 1)?.Key;
+        var duplicate = tagHandles.GroupBy(static handle => handle, StringComparer.Ordinal)
+            .FirstOrDefault(static group => group.Count() > 1)?.Key;
         if (duplicate is not null)
         {
             throw new ArgumentException($"Duplicate tag handle supplied: {duplicate}.");
         }
     }
 
-    private static async Task RequireTagsExistAsync(SqliteConnection connection, System.Data.Common.DbTransaction transaction, IReadOnlyList<string> tagHandles, CancellationToken cancellationToken)
+    private static async Task RequireTagsExistAsync(SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction, IReadOnlyList<string> tagHandles,
+        CancellationToken cancellationToken)
     {
         if (tagHandles.Count == 0)
         {
@@ -162,8 +177,10 @@ public sealed class MediaWriteService(
 
         await using var command = connection.CreateCommand();
         command.Transaction = (SqliteTransaction)transaction;
-        var parameters = tagHandles.Select((handle, index) => new { Handle = handle, Parameter = $"$tag{index}" }).ToArray();
-        command.CommandText = $"SELECT handle FROM tag WHERE handle IN ({string.Join(", ", parameters.Select(static parameter => parameter.Parameter))})";
+        var parameters = tagHandles.Select((handle, index) => new { Handle = handle, Parameter = $"$tag{index}" })
+            .ToArray();
+        command.CommandText =
+            $"SELECT handle FROM tag WHERE handle IN ({string.Join(", ", parameters.Select(static parameter => parameter.Parameter))})";
         foreach (var parameter in parameters)
         {
             command.Parameters.AddWithValue(parameter.Parameter, parameter.Handle);
@@ -180,6 +197,33 @@ public sealed class MediaWriteService(
         if (missingHandles.Length > 0)
         {
             throw new InvalidOperationException($"Unknown tag handle(s): {string.Join(", ", missingHandles)}.");
+        }
+    }
+
+    private static async Task ReplaceTagReferencesAsync(SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction, string mediaHandle, IReadOnlyList<string> tagHandles,
+        CancellationToken cancellationToken)
+    {
+        await using (var deleteCommand = connection.CreateCommand())
+        {
+            deleteCommand.Transaction = (SqliteTransaction)transaction;
+            deleteCommand.CommandText =
+                "DELETE FROM reference WHERE obj_handle = $mediaHandle AND ref_class = 'Tag'";
+            deleteCommand.Parameters.AddWithValue("$mediaHandle", mediaHandle);
+            await deleteCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        foreach (var tagHandle in tagHandles)
+        {
+            await using var insertCommand = connection.CreateCommand();
+            insertCommand.Transaction = (SqliteTransaction)transaction;
+            insertCommand.CommandText = """
+                                        INSERT INTO reference (obj_handle, obj_class, ref_handle, ref_class)
+                                        VALUES ($mediaHandle, 'Media', $tagHandle, 'Tag')
+                                        """;
+            insertCommand.Parameters.AddWithValue("$mediaHandle", mediaHandle);
+            insertCommand.Parameters.AddWithValue("$tagHandle", tagHandle);
+            await insertCommand.ExecuteNonQueryAsync(cancellationToken);
         }
     }
 

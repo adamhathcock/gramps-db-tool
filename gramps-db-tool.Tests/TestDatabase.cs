@@ -57,6 +57,7 @@ internal sealed class TestDatabase : IDisposable
                             CREATE TABLE note (handle VARCHAR(50) PRIMARY KEY NOT NULL, json_data TEXT, gramps_id TEXT, format INTEGER, change INTEGER, private INTEGER);
                             CREATE TABLE citation (handle VARCHAR(50) PRIMARY KEY NOT NULL, json_data TEXT, gramps_id TEXT, page TEXT, confidence INTEGER, source_handle VARCHAR(50), change INTEGER, private INTEGER);
                             CREATE TABLE tag (handle VARCHAR(50) PRIMARY KEY NOT NULL, json_data TEXT, name TEXT, color VARCHAR(13), priority INTEGER, change INTEGER);
+                            CREATE TABLE reference (obj_handle VARCHAR(50), obj_class TEXT, ref_handle VARCHAR(50), ref_class TEXT);
                             """);
 
         if (includeMediaPath)
@@ -73,42 +74,56 @@ internal sealed class TestDatabase : IDisposable
         InsertTag(connection, "tag2", "Missing Media", "#ff7800", 1, 1001);
 
         InsertObject(connection, "person", "person1", "I0001", $$"""
-                                                                 {"_class":"Person","handle":"person1","gramps_id":"I0001","gender":1,"primary_name":{"first_name":"Ada","surname_list":[{"surname":"Lovelace"}]},"event_ref_list":[{"ref":"event1"}],"family_list":["family1"],"parent_family_list":[],"media_list":[{"ref":"media1"}],"note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag1"]}
-                                                                 """, "given_name", "Ada", "surname", "Lovelace");
+                                                                 {"_class":"Person","handle":"person1","gramps_id":"I0001","gender":1,"primary_name":{"first_name":"Ada","surname_list":[{"surname":"Lovelace"}]},"birth_ref_index":0,"death_ref_index":-1,"event_ref_list":[{"ref":"event1","role":{"value":0,"string":"Primary"},"private":false,"citation_list":["citation1"],"note_list":["note1"]}],"family_list":["family1"],"parent_family_list":[],"media_list":[{"ref":"media1","rect":[0,0,100,100]}],"note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag1"],"person_ref_list":[{"ref":"person2","rel":"Colleague"}],"change":1234,"private":true}
+                                                                 """, "given_name", "Ada", "surname", "Lovelace",
+            "change", 1234, "private", 1);
         InsertObject(connection, "person", "person2", "I0002", $$"""
                                                                  {"_class":"Person","handle":"person2","gramps_id":"I0002","gender":1,"primary_name":{"first_name":"Charles","surname_list":[{"surname":"Babbage"}]},"event_ref_list":[],"family_list":["family1"],"parent_family_list":[],"media_list":[],"note_list":[],"citation_list":[],"tag_list":[]}
                                                                  """, "given_name", "Charles", "surname", "Babbage");
         InsertObject(connection, "family", "family1", "F0001", """
-                                                               {"_class":"Family","handle":"family1","gramps_id":"F0001","father_handle":"person2","mother_handle":"person1","child_ref_list":[{"ref":"person3"}],"type":{"value":0,"string":"Married"},"event_ref_list":[{"ref":"event1"}],"note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag2"]}
+                                                               {"_class":"Family","handle":"family1","gramps_id":"F0001","father_handle":"person2","mother_handle":"person1","child_ref_list":[{"ref":"person3","frel":{"value":1,"string":"Birth"},"mrel":{"value":1,"string":"Birth"}}],"type":{"value":0,"string":"Married"},"event_ref_list":[{"ref":"event1","role":{"value":1,"string":"Family"}}],"media_list":[{"ref":"media1"}],"note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag2"]}
                                                                """);
         InsertObject(connection, "event", "event1", "E0001", """
-                                                             {"_class":"Event","handle":"event1","gramps_id":"E0001","type":{"value":12,"string":"Birth"},"description":"Born","place":"place1","note_list":["note1"],"citation_list":["citation1"],"media_list":[{"ref":"media1"}],"tag_list":["tag1"]}
+                                                             {"_class":"Event","handle":"event1","gramps_id":"E0001","type":{"value":12,"string":"Birth"},"date":{"calendar":0,"modifier":0,"quality":0,"dateval":[10,12,1815,false],"text":"","sortval":2384181,"newyear":0},"description":"Born","place":"place1","note_list":["note1"],"citation_list":["citation1"],"media_list":[{"ref":"media1"}],"tag_list":["tag1"]}
                                                              """, "description", "Born");
         InsertObject(connection, "source", "source1", "S0001", """
-                                                               {"_class":"Source","handle":"source1","gramps_id":"S0001","title":"Register","author":"Clerk","pubinfo":"Archive","abbrev":"REG","note_list":["note1"],"media_list":[{"ref":"media1"}],"tag_list":["tag2"]}
+                                                               {"_class":"Source","handle":"source1","gramps_id":"S0001","title":"Register","author":"Clerk","pubinfo":"Archive","abbrev":"REG","note_list":["note1"],"media_list":[{"ref":"media1"}],"reporef_list":[{"ref":"repo1","call_number":"MS 42","media_type":{"value":0,"string":"Book"}}],"tag_list":["tag2"]}
                                                                """, "title", "Register");
         InsertObject(connection, "media", "media1", "O0001", """
-                                                             {"_class":"Media","handle":"media1","gramps_id":"O0001","path":"photos/ada.jpg","mime":"image/jpeg","desc":"Portrait","checksum":"abc","note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag1","tag2"]}
+                                                             {"_class":"Media","handle":"media1","gramps_id":"O0001","path":"photos/ada.jpg","mime":"image/jpeg","desc":"Portrait","checksum":"abc","date":{"calendar":0,"modifier":3,"quality":1,"dateval":[0,0,1840,false],"text":"","sortval":2393097,"newyear":0},"note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag1","tag2"]}
                                                              """, "path", "photos/ada.jpg");
         InsertObject(connection, "media", "media2", "O0002", """
                                                              {"_class":"Media","handle":"media2","gramps_id":"O0002","path":"photos/charles.jpg","mime":"image/jpeg","desc":"Portrait","checksum":"def","note_list":[],"citation_list":[],"tag_list":[]}
                                                              """, "path", "photos/charles.jpg");
         InsertObject(connection, "place", "place1", "P0001", """
-                                                             {"_class":"Place","handle":"place1","gramps_id":"P0001","title":"London","long":"-0.1276","lat":"51.5072","placeref_list":[{"ref":"place2"}],"name":{"value":"London","lang":"en"},"place_type":{"value":9,"string":"City"},"media_list":[{"ref":"media1"}],"citation_list":["citation1"],"note_list":["note1"],"tag_list":["tag1"]}
+                                                             {"_class":"Place","handle":"place1","gramps_id":"P0001","title":"London","long":"-0.1276","lat":"51.5072","placeref_list":[{"ref":"place2","date":{"calendar":0,"modifier":0,"quality":0,"dateval":[0,0,1800,false],"text":"","sortval":2378497,"newyear":[3,25]}}],"name":{"value":"London","lang":"en"},"place_type":{"value":9,"string":"City"},"media_list":[{"ref":"media1"}],"citation_list":["citation1"],"note_list":["note1"],"tag_list":["tag1"]}
                                                              """, "title", "London");
         InsertObject(connection, "place", "place2", "P0002", """
                                                              {"_class":"Place","handle":"place2","gramps_id":"P0002","title":"England","tag_list":[]}
                                                              """, "title", "England");
         InsertObject(connection, "repository", "repo1", "R0001", """
-                                                                 {"_class":"Repository","handle":"repo1","gramps_id":"R0001","name":"Archive","tag_list":["tag2"]}
+                                                                 {"_class":"Repository","handle":"repo1","gramps_id":"R0001","type":{"value":1,"string":"Archive"},"name":"Archive","note_list":["note1"],"tag_list":["tag2"]}
                                                                  """, "name", "Archive");
         InsertObject(connection, "note", "note1", "N0001", """
-                                                           {"_class":"Note","handle":"note1","gramps_id":"N0001","text":{"string":"A note"},"format":0,"type":{"value":0,"string":"General"},"tag_list":["tag2"]}
+                                                           {"_class":"Note","handle":"note1","gramps_id":"N0001","text":{"string":"A note","tags":[{"name":{"value":8,"string":""},"value":"gramps://Person/handle/person1","ranges":[[0,6]]}]},"format":0,"type":{"value":0,"string":"General"},"tag_list":["tag2"]}
                                                            """, "format", 0);
         InsertObject(connection, "citation", "citation1", "C0001", """
-                                                                   {"_class":"Citation","handle":"citation1","gramps_id":"C0001","page":"p. 1","confidence":3,"source_handle":"source1","note_list":["note1"],"media_list":[{"ref":"media1"}],"tag_list":["tag1"]}
+                                                                   {"_class":"Citation","handle":"citation1","gramps_id":"C0001","date":{"calendar":0,"modifier":0,"quality":0,"dateval":[1,1,1843,false],"text":"","sortval":2394193,"newyear":0},"page":"p. 1","confidence":3,"source_handle":"source1","note_list":["note1"],"media_list":[{"ref":"media1"}],"tag_list":["tag1"]}
                                                                    """, "page", "p. 1", "confidence", 3,
             "source_handle", "source1");
+
+        Execute(connection, """
+                            INSERT INTO reference VALUES ('person1', 'Person', 'event1', 'Event');
+                            INSERT INTO reference VALUES ('person1', 'Person', 'media1', 'Media');
+                            INSERT INTO reference VALUES ('person1', 'Person', 'person2', 'Person');
+                            INSERT INTO reference VALUES ('family1', 'Family', 'event1', 'Event');
+                            INSERT INTO reference VALUES ('family1', 'Family', 'media1', 'Media');
+                            INSERT INTO reference VALUES ('event1', 'Event', 'place1', 'Place');
+                            INSERT INTO reference VALUES ('source1', 'Source', 'repo1', 'Repository');
+                            INSERT INTO reference VALUES ('citation1', 'Citation', 'source1', 'Source');
+                            INSERT INTO reference VALUES ('place1', 'Place', 'place2', 'Place');
+                            INSERT INTO reference VALUES ('note1', 'Note', 'person1', 'Person');
+                            """);
     }
 
     private static void Execute(SqliteConnection connection, string sql)
