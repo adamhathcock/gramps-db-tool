@@ -25,6 +25,7 @@ public sealed class ToolContractTests
             "create_backup",
             "create_citation",
             "create_note",
+            "export_webtrees_fan_chart",
             "find_backlinks",
             "find_objects_by_tag",
             "get_citation",

@@ -12,12 +12,16 @@ internal sealed class TestDatabase : IDisposable
     public string MediaPath => Path.Combine(DirectoryPath, "media");
     public string SavePath => Path.Combine(DirectoryPath, "backups");
 
-    public TestDatabase(bool includeMediaPath = true, bool includeSavePath = true)
+    public TestDatabase(bool includeMediaPath = true, bool includeSavePath = true, bool includeFanChartData = false)
     {
         Directory.CreateDirectory(DirectoryPath);
         Directory.CreateDirectory(MediaPath);
         Directory.CreateDirectory(SavePath);
         CreateDatabase(includeMediaPath, includeSavePath);
+        if (includeFanChartData)
+        {
+            AddFanChartData();
+        }
     }
 
     public string WriteConfig(string? contents = null)
@@ -74,18 +78,18 @@ internal sealed class TestDatabase : IDisposable
         InsertTag(connection, "tag2", "Missing Media", "#ff7800", 1, 1001);
 
         InsertObject(connection, "person", "person1", "I0001", $$"""
-                                                                 {"_class":"Person","handle":"person1","gramps_id":"I0001","gender":1,"primary_name":{"first_name":"Ada","surname_list":[{"surname":"Lovelace"}]},"birth_ref_index":0,"death_ref_index":-1,"event_ref_list":[{"ref":"event1","role":{"value":0,"string":"Primary"},"private":false,"citation_list":["citation1"],"note_list":["note1"]}],"family_list":["family1"],"parent_family_list":[],"media_list":[{"ref":"media1","rect":[0,0,100,100]}],"note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag1"],"person_ref_list":[{"ref":"person2","rel":"Colleague"}],"change":1234,"private":true}
+                                                                  {"_class":"Person","handle":"person1","gramps_id":"I0001","gender":1,"primary_name":{"first_name":"Ada","surname_list":[{"surname":"Lovelace"}]},"birth_ref_index":0,"death_ref_index":-1,"event_ref_list":[{"ref":"event1","role":{"value":0,"string":"Primary"},"private":false,"citation_list":["citation1"],"note_list":["note1"]}],"family_list":["family1"],"parent_family_list":[],"media_list":[{"ref":"media1","rect":[0,0,100,100]}],"note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag1"],"person_ref_list":[{"ref":"person2","rel":"Colleague"}],"change":1234,"private":true}
                                                                  """, "given_name", "Ada", "surname", "Lovelace",
             "change", 1234, "private", 1);
         InsertObject(connection, "person", "person2", "I0002", $$"""
-                                                                 {"_class":"Person","handle":"person2","gramps_id":"I0002","gender":1,"primary_name":{"first_name":"Charles","surname_list":[{"surname":"Babbage"}]},"event_ref_list":[],"family_list":["family1"],"parent_family_list":[],"media_list":[],"note_list":[],"citation_list":[],"tag_list":[]}
-                                                                 """, "given_name", "Charles", "surname", "Babbage");
+                                                                  {"_class":"Person","handle":"person2","gramps_id":"I0002","gender":1,"primary_name":{"first_name":"Charles","surname_list":[{"surname":"Babbage"}]},"event_ref_list":[],"family_list":["family1"],"parent_family_list":[],"media_list":[],"note_list":[],"citation_list":[],"tag_list":[]}
+                                                                  """, "given_name", "Charles", "surname", "Babbage");
         InsertObject(connection, "family", "family1", "F0001", """
-                                                               {"_class":"Family","handle":"family1","gramps_id":"F0001","father_handle":"person2","mother_handle":"person1","child_ref_list":[{"ref":"person3","frel":{"value":1,"string":"Birth"},"mrel":{"value":1,"string":"Birth"}}],"type":{"value":0,"string":"Married"},"event_ref_list":[{"ref":"event1","role":{"value":1,"string":"Family"}}],"media_list":[{"ref":"media1"}],"note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag2"]}
+                                                                {"_class":"Family","handle":"family1","gramps_id":"F0001","father_handle":"person2","mother_handle":"person1","child_ref_list":[{"ref":"person3","frel":{"value":1,"string":"Birth"},"mrel":{"value":1,"string":"Birth"}}],"type":{"value":0,"string":"Married"},"event_ref_list":[{"ref":"event1","role":{"value":1,"string":"Family"}}],"media_list":[{"ref":"media1"}],"note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag2"]}
                                                                """);
         InsertObject(connection, "event", "event1", "E0001", """
-                                                             {"_class":"Event","handle":"event1","gramps_id":"E0001","type":{"value":12,"string":"Birth"},"date":{"calendar":0,"modifier":0,"quality":0,"dateval":[10,12,1815,false],"text":"","sortval":2384181,"newyear":0},"description":"Born","place":"place1","note_list":["note1"],"citation_list":["citation1"],"media_list":[{"ref":"media1"}],"tag_list":["tag1"]}
-                                                             """, "description", "Born");
+                                                              {"_class":"Event","handle":"event1","gramps_id":"E0001","type":{"value":12,"string":"Birth"},"date":{"calendar":0,"modifier":0,"quality":0,"dateval":[10,12,1815,false],"text":"","sortval":2384181,"newyear":0},"description":"Born","place":"place1","note_list":["note1"],"citation_list":["citation1"],"media_list":[{"ref":"media1"}],"tag_list":["tag1"]}
+                                                              """, "description", "Born");
         InsertObject(connection, "source", "source1", "S0001", """
                                                                {"_class":"Source","handle":"source1","gramps_id":"S0001","title":"Register","author":"Clerk","pubinfo":"Archive","abbrev":"REG","note_list":["note1"],"media_list":[{"ref":"media1"}],"reporef_list":[{"ref":"repo1","call_number":"MS 42","media_type":{"value":0,"string":"Book"}}],"tag_list":["tag2"]}
                                                                """, "title", "Register");
@@ -126,10 +130,45 @@ internal sealed class TestDatabase : IDisposable
                             """);
     }
 
+    private void AddFanChartData()
+    {
+        Directory.CreateDirectory(Path.Combine(MediaPath, "photos"));
+        File.WriteAllText(Path.Combine(MediaPath, "photos", "ada.jpg"), "test image");
+
+        using var connection =
+            new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DatabasePath }.ToString());
+        connection.Open();
+        InsertMetadata(connection, "default-person-handle", "person1");
+        UpdateObjectJson(connection, "person", "person1", """
+                                                               {"_class":"Person","handle":"person1","gramps_id":"I0001","gender":1,"primary_name":{"first_name":"Ada","surname_list":[{"surname":"Lovelace"}]},"birth_ref_index":0,"death_ref_index":1,"event_ref_list":[{"ref":"event1","role":{"value":0,"string":"Primary"},"private":false,"citation_list":["citation1"],"note_list":["note1"]},{"ref":"event3","role":{"value":0,"string":"Primary"}}],"family_list":["family1"],"parent_family_list":[],"media_list":[{"ref":"media1","rect":[0,0,100,100]}],"note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag1"],"person_ref_list":[{"ref":"person2","rel":"Colleague"}],"change":1234,"private":true}
+                                                               """);
+        InsertObject(connection, "person", "person3", "I0003", """
+                                                                  {"_class":"Person","handle":"person3","gramps_id":"I0003","gender":0,"primary_name":{"first_name":"Cora","surname_list":[{"surname":"Byron"}]},"event_ref_list":[],"family_list":[],"parent_family_list":["family1"],"media_list":[],"note_list":[],"citation_list":[],"tag_list":[]}
+                                                                  """);
+        UpdateObjectJson(connection, "family", "family1", """
+                                                               {"_class":"Family","handle":"family1","gramps_id":"F0001","father_handle":"person2","mother_handle":"person1","child_ref_list":[{"ref":"person3","frel":{"value":1,"string":"Birth"},"mrel":{"value":1,"string":"Birth"}}],"type":{"value":0,"string":"Married"},"event_ref_list":[{"ref":"event1","role":{"value":1,"string":"Family"}},{"ref":"event2","role":{"value":1,"string":"Family"}}],"media_list":[{"ref":"media1"}],"note_list":["note1"],"citation_list":["citation1"],"tag_list":["tag2"]}
+                                                               """);
+        InsertObject(connection, "event", "event2", "E0002", """
+                                                              {"_class":"Event","handle":"event2","gramps_id":"E0002","type":{"value":1,"string":"Marriage"},"date":{"calendar":0,"modifier":0,"quality":0,"dateval":[5,1,1810,false],"text":"","sortval":2382176,"newyear":0},"description":"Married","place":"place1"}
+                                                              """, "description", "Married");
+        InsertObject(connection, "event", "event3", "E0003", """
+                                                              {"_class":"Event","handle":"event3","gramps_id":"E0003","type":{"value":13,"string":"Death"},"date":{"calendar":0,"modifier":0,"quality":0,"dateval":[9,2,1852,false],"text":"","sortval":2397500,"newyear":0},"description":"Died","place":"place1"}
+                                                              """, "description", "Died");
+    }
+
     private static void Execute(SqliteConnection connection, string sql)
     {
         using var command = connection.CreateCommand();
         command.CommandText = sql;
+        command.ExecuteNonQuery();
+    }
+
+    private static void UpdateObjectJson(SqliteConnection connection, string table, string handle, string json)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = $"UPDATE {table} SET json_data = $json WHERE handle = $handle";
+        command.Parameters.AddWithValue("$handle", handle);
+        command.Parameters.AddWithValue("$json", json);
         command.ExecuteNonQuery();
     }
 

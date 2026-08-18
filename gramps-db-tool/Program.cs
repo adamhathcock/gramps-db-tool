@@ -23,6 +23,7 @@ builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton<GrampsConnectionFactory>();
 builder.Services.AddSingleton<IMediaPathService, MediaPathService>();
 builder.Services.AddSingleton<GrampsRepository>();
+builder.Services.AddSingleton<FanChartExportService>();
 builder.Services.AddSingleton<MediaWriteService>();
 builder.Services.AddSingleton<ObjectWriteService>();
 
@@ -41,7 +42,8 @@ builder.Services
     .WithTools<PlaceTools>()
     .WithTools<TagTools>()
     .WithTools<RepositoryTools>()
-    .WithTools<ObjectTools>();
+    .WithTools<ObjectTools>()
+    .WithTools<ExportTools>();
 
 var app = builder.Build();
 var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");

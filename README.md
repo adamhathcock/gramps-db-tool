@@ -29,6 +29,7 @@ Current read-only tools:
 - `list_tags`
 - `get_tags`
 - `find_objects_by_tag`
+- `export_webtrees_fan_chart`
 
 Current write tools:
 
@@ -48,6 +49,8 @@ Paged tools return `items`, `limit`, `offset`, `returnedCount`, `totalCount`, `h
 Batch `get_*` tools accept up to 100 handles or Gramps IDs, preserve requested order for found objects, and return `missingValues` for identifiers that were not found. `get_tags` uses names instead of Gramps IDs.
 
 Read DTOs expose structured Gramps dates, type values, privacy markers, change timestamps, and embedded event, child, media, person, place, and repository references. Note results include internal Gramps and external styled-text links.
+
+`export_webtrees_fan_chart` returns a complete `source/family.json` payload for the adjacent `webtrees-fan-chart` static-site project; it does not write a server-side file. It uses Gramps IDs as xrefs (falling back to handles), chooses the Gramps home person as `config.defaultXref` when possible, and includes all records marked private. Its image paths are absolute paths resolved only through Gramps database `media-path` metadata, so the fan-chart build can copy the first existing referenced image into its own static assets.
 
 `create_note` and `create_citation` require the caller to supply a unique Gramps ID. Gramps ID prefix preferences are not stored in the database and may differ between installations, so the server does not guess or persist them. New citations require an existing source handle.
 
